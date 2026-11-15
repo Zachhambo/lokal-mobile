@@ -956,6 +956,10 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
 
     private fun buildNotification(): Notification {
         if (isNativeChromecast) {
+            // Android Auto/browser clients still hold Lokal's exported token,
+            // even while CAF owns the active Cast media card and volume keys.
+            updateMediaSessionMetadata()
+            updatePlaybackState()
             // Keep the phone's HTTP relay alive via the foreground service,
             // without publishing a second competing media controller. The
             // actual player card/volume controls belong to Google's CAF
