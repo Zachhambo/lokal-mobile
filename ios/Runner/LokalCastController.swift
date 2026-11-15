@@ -26,6 +26,7 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
   private var disconnectReply: Reply?
   private var disconnectDeadline: DispatchWorkItem?
   private var ownedDeviceID: String?
+  private weak var ownedSession: GCKCastSession?
   private var receiverMayBePlaying = false
   private var requests: [UUID: LokalCastRequest] = [:]
 
@@ -194,6 +195,7 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
     finishDisconnect(.failure(Failure(code: "CAST_CANCELLED", message: "The Cast sender was detached.")))
     detach()
     ownedDeviceID = nil
+    ownedSession = nil
     receiverMayBePlaying = false
     if let manager = context?.sessionManager, manager.currentSession != nil {
       _ = manager.endSessionAndStopCasting(false)
@@ -296,6 +298,7 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
 
   private func attach(_ session: GCKCastSession) {
     detach()
+    ownedSession = session
     let channel = LokalReceiverChannel(namespace: "urn:x-cast:app.lokal.cast")
     channel.message = { [weak self] text in self?.onEvent?(["event": "receiverMessage", "data": text]) }
     session.add(channel)
@@ -403,8 +406,10 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
   }
 
   func sessionManager(_ sessionManager: GCKSessionManager, didEnd session: GCKCastSession, withError error: Error?) {
-    // An old session's late callback cannot terminate a new sender handoff.
-    guard session.device.uniqueID == ownedDeviceID else { return }
+    // A late callback for the same physical receiver must not tear down a
+    // newer Cast session that has replaced it.
+    guard ownedSession === session, session.device.uniqueID == ownedDeviceID else { return }
+    ownedSession = nil
     detach()
     if error == nil { receiverMayBePlaying = false }
     if !receiverMayBePlaying { ownedDeviceID = nil }
@@ -418,7 +423,7 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
   }
 
   func sessionManager(_ sessionManager: GCKSessionManager, didSuspend session: GCKCastSession, with reason: GCKConnectionSuspendReason) {
-    guard session.device.uniqueID == ownedDeviceID else { return }
+    guard ownedSession === session, session.device.uniqueID == ownedDeviceID else { return }
     detach()
     // Never emit sessionEnded here: suspension must not resume local playback.
     onEvent?(["event": "sessionSuspended"])
