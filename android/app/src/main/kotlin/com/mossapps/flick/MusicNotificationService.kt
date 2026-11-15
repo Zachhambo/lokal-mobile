@@ -81,6 +81,8 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
     private var fallbackArt: Bitmap? = null
     private var fallbackAccent: String? = null
     private var isCasting: Boolean = false
+    /** True only for a Google CAF session. DLNA and linked-PC use Lokal's session. */
+    private var isNativeChromecast: Boolean = false
     private var isRemotePlayback: Boolean = false
     /** A live stream (internet radio): no next/previous, seek, shuffle or favorite. */
     private var isLive: Boolean = false
@@ -232,6 +234,8 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
             if (it.hasExtra("isFavorite")) isFavorite = it.getBooleanExtra("isFavorite", false)
             if (it.hasExtra("color")) currentColor = it.getIntExtra("color", 0)
             if (it.hasExtra("isCasting")) isCasting = it.getBooleanExtra("isCasting", false)
+            if (it.hasExtra("isNativeChromecast"))
+                isNativeChromecast = it.getBooleanExtra("isNativeChromecast", false)
             if (it.hasExtra("isRemotePlayback")) isRemotePlayback = it.getBooleanExtra("isRemotePlayback", false)
             if (it.hasExtra("isLive")) isLive = it.getBooleanExtra("isLive", false)
             if (it.hasExtra("castDeviceName")) castDeviceName = it.getStringExtra("castDeviceName")
@@ -857,10 +861,23 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
         )
     }
 
-    // ponytail: setPlaybackToRemote is what flips the system volume panel to the
-    // cast target (TV icon, remote slider, hardware keys forwarded to us).
-    // Route descriptor publishing alone doesn't do that.
+    // The CAF sender publishes the actual Cast notification and remote-volume
+    // MediaSession. Never advertise a competing Lokal media session/remote
+    // VolumeProvider while Chromecast owns playback. DLNA and PC remotes still
+    // use the existing Lokal provider.
     private fun syncCastRouting() {
+        if (isNativeChromecast) {
+            if (castVolumeProvider != null) {
+                castVolumeProvider = null
+                mediaSession.setPlaybackToLocal(AudioManager.STREAM_MUSIC)
+            }
+            if (mediaRouter.mediaSessionToken == mediaSession.sessionToken) {
+                mediaRouter.setMediaSessionCompat(null)
+            }
+            mediaSession.isActive = false
+            return
+        }
+        if (!mediaSession.isActive) mediaSession.isActive = true
         if ((isCasting || isRemotePlayback) && castVolumeProvider == null) {
             attachCastVolume()
         } else if (!isCasting && !isRemotePlayback) {
@@ -933,6 +950,34 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
     }
 
     private fun buildNotification(): Notification {
+        if (isNativeChromecast) {
+            // Keep the phone's HTTP relay alive via the foreground service,
+            // without publishing a second competing media controller. The
+            // actual player card/volume controls belong to Google's CAF
+            // MediaNotificationService while a Cast session is connected.
+            val contentIntent = packageManager.getLaunchIntentForPackage(packageName)?.let {
+                PendingIntent.getActivity(
+                    this, 0, it,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            }
+            return NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(
+                    String.format(
+                        WidgetPrefs.localizedText(this, R.string.native_music_casting_to),
+                        castDeviceName ?: WidgetPrefs.localizedText(this, R.string.native_music_device)
+                    )
+                )
+                .setContentText("Lokal")
+                .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                .setContentIntent(contentIntent)
+                .setPriority(NotificationCompat.PRIORITY_MIN)
+                .setSilent(true)
+                .setOnlyAlertOnce(true)
+                .setOngoing(true)
+                .build()
+        }
         updateMediaSessionMetadata()
         updatePlaybackState()
 
