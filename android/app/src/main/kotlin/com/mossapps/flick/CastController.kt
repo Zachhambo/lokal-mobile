@@ -41,6 +41,7 @@ class CastController(private val context: Context) {
     var onEvent: ((Map<String, Any?>) -> Unit)? = null
 
     private var connectedSession: CastSession? = null
+    private var activeRouteId: String? = null
     private var abandonedSession: CastSession? = null
     private var mediaClientCallback: RemoteMediaClient.Callback? = null
     private var attachedClient: RemoteMediaClient? = null
@@ -68,13 +69,15 @@ class CastController(private val context: Context) {
         }
         if (pendingRouteId != null && mediaRouter.selectedRoute.id != pendingRouteId) return
         connectedSession = session
+        activeRouteId = mediaRouter.selectedRoute.id
         connectionMayBeStarting = false
         attachMediaClientListener(session)
+        val routeId = activeRouteId
         session.setMessageReceivedCallbacks(receiverNamespace) { _, _, message ->
-            try { emit(mapOf("event" to "receiverMessage", "data" to message)) } catch (_: Exception) { }
+            try { emit(mapOf("event" to "receiverMessage", "data" to message, "deviceId" to routeId)) } catch (_: Exception) { }
         }
         pendingConnect?.succeed()
-        emit(mapOf("event" to event))
+        emit(mapOf("event" to event, "deviceId" to routeId))
     }
 
     private fun sessionFailed(code: Int) {
@@ -89,7 +92,9 @@ class CastController(private val context: Context) {
         override fun onSessionEnded(session: CastSession, error: Int) {
             if (abandonedSession === session) { abandonedSession = null; return }
             if (connectedSession != null && connectedSession !== session) return
+            val endedRoute = activeRouteId
             connectedSession = null
+            activeRouteId = null
             connectionMayBeStarting = false
             detachMediaClientListener()
             failMediaReplies()
@@ -100,7 +105,7 @@ class CastController(private val context: Context) {
                 if (confirmed) pendingDisconnect?.succeed()
                 else pendingDisconnect?.fail("CAST_DISCONNECT", "Receiver shutdown was not confirmed (status $error).")
             }
-            emit(mapOf("event" to "sessionEnded", "shutdownConfirmed" to confirmed))
+            emit(mapOf("event" to "sessionEnded", "deviceId" to endedRoute, "shutdownConfirmed" to confirmed))
         }
         override fun onSessionStarting(p0: CastSession) {}
         override fun onSessionStartFailed(p0: CastSession, p1: Int) = sessionFailed(p1)
@@ -111,7 +116,7 @@ class CastController(private val context: Context) {
             if (connectedSession !== session) return
             detachMediaClientListener()
             failMediaReplies()
-            emit(mapOf("event" to "sessionSuspended"))
+            emit(mapOf("event" to "sessionSuspended", "deviceId" to activeRouteId))
         }
     }
 
@@ -218,6 +223,7 @@ class CastController(private val context: Context) {
         emit(
             mapOf(
                 "event" to "status",
+                "deviceId" to activeRouteId,
                 "position" to client.approximateStreamPosition,
                 "duration" to client.streamDuration,
                 "playing" to client.isPlaying,
@@ -333,6 +339,7 @@ class CastController(private val context: Context) {
         failMediaReplies()
         abandonedSession = connectedSession ?: castContext?.sessionManager?.currentCastSession
         connectedSession = null
+        activeRouteId = null
         connectionMayBeStarting = false
         pendingRouteId = null
         detachMediaClientListener()
