@@ -506,7 +506,10 @@ class CastingService {
     });
   }
 
-  void _recoverLostChromecast({required bool shutdownConfirmed}) {
+  void _recoverLostChromecast({
+    required bool shutdownConfirmed,
+    int retryAttempt = 0,
+  }) {
     final device = _activeDevice;
     final sessionRevision = _ccSessionRevision;
     if (device?.backend != CastBackend.chromecast ||
@@ -537,7 +540,30 @@ class CastingService {
             unawaited(PlayerService().refreshNotificationState());
           }
         },
-      ).then<void>((_) {}).catchError((_) {}),
+      ).then<void>((_) {}).catchError((Object error) {
+        // runOutputTransition can reject before running its callback if an
+        // external output lease cannot be released. Do not silently abandon
+        // this recovery: retry while this exact receiver still owns playback.
+        if (!identical(_activeDevice, device) ||
+            sessionRevision != _ccSessionRevision ||
+            _tearingDown ||
+            isChangingOutputNotifier.value) return;
+        debugPrint('[Cast] Lost-session recovery failed: $error');
+        errorNotifier.value =
+            'Cast disconnected. Retrying return to this device; playback may still continue on the receiver.';
+        if (retryAttempt < 3) {
+          Timer(Duration(seconds: 1 << retryAttempt), () {
+            if (identical(_activeDevice, device) &&
+                sessionRevision == _ccSessionRevision &&
+                !isChangingOutputNotifier.value) {
+              _recoverLostChromecast(
+                shutdownConfirmed: shutdownConfirmed,
+                retryAttempt: retryAttempt + 1,
+              );
+            }
+          });
+        }
+      }),
     );
   }
 
