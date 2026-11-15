@@ -49,7 +49,7 @@ List<GlobalCatalogueArtist> deduplicateCatalogueArtists(
   for (final artist in artists) {
     final name = artist.name.trim();
     final key = '${recommendationKey(name)}|${artist.catalogueId}';
-    if (key.isEmpty) continue;
+    if (recommendationKey(name).isEmpty) continue;
     final incoming = GlobalCatalogueArtist(
       name: name,
       artworkUrl: artist.artworkUrl,
