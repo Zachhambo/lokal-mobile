@@ -63,6 +63,7 @@ class LokalMusicDetailPage extends ConsumerStatefulWidget {
     required String name,
     required this.localSongs,
     this.initialOnline = false,
+    this.appleArtistId,
     this.catalogue,
   }) : title = name,
        artist = name,
@@ -86,6 +87,7 @@ class LokalMusicDetailPage extends ConsumerStatefulWidget {
   final LokalCatalogueAlbum? release;
   final LokalOnlineCatalogue? catalogue;
   final String? artworkHeroTag;
+  final String? appleArtistId;
 
   @override
   ConsumerState<LokalMusicDetailPage> createState() =>
