@@ -1300,6 +1300,10 @@ class MainActivity: FlutterActivity() {
                     if (cc == null) result.error("CAST_UNAVAILABLE", "Google Cast is unavailable.", null)
                     else cc.disconnect(result)
                 }
+                "abandon" -> {
+                    if (cc == null) result.error("CAST_UNAVAILABLE", "Google Cast is unavailable.", null)
+                    else cc.abandon(result)
+                }
                 "load" -> {
                     if (cc == null) result.error("CAST_UNAVAILABLE", "Google Cast is unavailable.", null)
                     else cc.load(
