@@ -41,6 +41,7 @@ class CastController(private val context: Context) {
     var onEvent: ((Map<String, Any?>) -> Unit)? = null
 
     private var connectedSession: CastSession? = null
+    private var abandonedSession: CastSession? = null
     private var mediaClientCallback: RemoteMediaClient.Callback? = null
     private var attachedClient: RemoteMediaClient? = null
     private var lastVolume: Double? = null
@@ -80,6 +81,7 @@ class CastController(private val context: Context) {
         override fun onSessionStarted(session: CastSession, sessionId: String) = sessionReady(session, "sessionStarted")
         override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) = sessionReady(session, "sessionResumed")
         override fun onSessionEnded(session: CastSession, error: Int) {
+            if (abandonedSession === session) { abandonedSession = null; return }
             if (connectedSession != null && connectedSession !== session) return
             connectedSession = null
             connectionMayBeStarting = false
@@ -102,7 +104,7 @@ class CastController(private val context: Context) {
             if (connectedSession !== session) return
             detachMediaClientListener()
             failMediaReplies()
-            emit(mapOf("event" to "sessionEnded", "shutdownConfirmed" to false))
+            emit(mapOf("event" to "sessionSuspended"))
         }
     }
 
@@ -271,6 +273,7 @@ class CastController(private val context: Context) {
         val session = connectedSession ?: manager?.currentCastSession
         if (session == null && !connectionMayBeStarting) {
             detachMediaClientListener()
+            try { mediaRouter.selectRoute(mediaRouter.defaultRoute) } catch (_: Exception) {}
             result.success(null)
             return
         }
@@ -283,6 +286,24 @@ class CastController(private val context: Context) {
         }
     }
 
+    /** Leave an unreachable receiver without claiming its audio was stopped.
+     * Used only after session loss or a user's explicit Return to phone action.
+     */
+    fun abandon(result: MethodChannel.Result) {
+        disconnectRequested = true
+        pendingConnect?.fail("CAST_CANCELLED", "The Cast connection was abandoned.")
+        pendingDisconnect?.fail("CAST_CANCELLED", "The Cast sender was detached.")
+        failMediaReplies()
+        abandonedSession = connectedSession ?: castContext?.sessionManager?.currentCastSession
+        connectedSession = null
+        connectionMayBeStarting = false
+        pendingRouteId = null
+        detachMediaClientListener()
+        try { castContext?.sessionManager?.endCurrentSession(false) } catch (_: Exception) {}
+        try { mediaRouter.selectRoute(mediaRouter.defaultRoute) } catch (_: Exception) {}
+        result.success(null)
+    }
+
     private fun client(): RemoteMediaClient? = connectedSession?.remoteMediaClient
         ?: castContext?.sessionManager?.currentCastSession?.takeIf { it.isConnected }?.remoteMediaClient
 
@@ -291,6 +312,7 @@ class CastController(private val context: Context) {
         val status = client?.mediaStatus
         reportedIdentity.update(status?.mediaInfo)
         return mapOf(
+            "connected" to (connectedSession?.isConnected == true || castContext?.sessionManager?.currentCastSession?.isConnected == true),
             "name" to (connectedSession?.castDevice?.friendlyName ?: mediaRouter.selectedRoute.name.toString()),
             "trackId" to reportedIdentity.trackId,
             "loadId" to reportedIdentity.loadId,
