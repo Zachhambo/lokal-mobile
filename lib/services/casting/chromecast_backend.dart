@@ -90,6 +90,12 @@ class ChromecastBackend {
   Future<double?> getVolume() => _call<double>('getVolume');
   Future<void> disconnect() => _invoke('disconnect');
 
+  /// A successful method-channel reply only confirms sender detachment.
+  /// The native sender must explicitly return true after receiver STOP was
+  /// acknowledged, otherwise playback on another output stays paused.
+  Future<bool> disconnectConfirmed() async =>
+      await _call<bool>('disconnect') == true;
+
   /// Detach the sender without promising that an unreachable receiver stopped.
   /// Call only for a lost Cast session or an explicit user-requested local return.
   Future<void> abandon() => _invoke('abandon');
