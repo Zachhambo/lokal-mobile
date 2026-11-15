@@ -381,7 +381,8 @@ class LokalOnlineCatalogue {
       }
     }
     var portrait = data?.info?.imageUrl ?? '';
-    if (portrait.isEmpty) {
+    // Do not display a namesake's image on an ID-identified artist page.
+    if (portrait.isEmpty && appleArtistId == null) {
       final client = http.Client();
       try {
         portrait = await DiscoveryArtworkResolver(DiscoveryHttp(client))
@@ -442,7 +443,8 @@ class LokalOnlineCatalogue {
       var album = data == null
           ? release
           : LokalCatalogueAlbum.fromApple(data.match);
-      if (discoveryImageUrl(album?.artwork).isEmpty) {
+      // With a source album ID, an unrelated text-search cover is not proof.
+      if (release?.id == null && discoveryImageUrl(album?.artwork).isEmpty) {
         String cover = '';
         final client = http.Client();
         try {
@@ -502,6 +504,11 @@ class LokalOnlineCatalogue {
               ),
           ],
         );
+      }
+      // Never replace a source-identified album with loosely matched tracks.
+      if (release?.id != null) {
+        return LokalCataloguePage(albums: [if (album != null) album],
+          url: album?.url ?? '', label: 'Apple Music');
       }
       final found = await _search(
         '$title ${splitArtistCredits(artist).firstOrNull ?? artist}',
