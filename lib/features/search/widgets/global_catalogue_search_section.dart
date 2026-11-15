@@ -11,6 +11,7 @@ import 'package:flick/services/global_catalogue_source.dart';
 import 'package:flick/services/global_catalogue_search.dart';
 import 'package:flick/services/online_playlist_reference.dart';
 import 'package:flick/features/konnekted/library/lokal_music_detail_page.dart';
+import 'package:flick/features/konnekted/library/lokal_online_catalogue.dart';
 import 'package:flick/widgets/common/cached_image_widget.dart';
 import 'package:flick/features/discovery/discovery_artwork.dart';
 import 'package:flick/features/discovery/discovery_models.dart';
@@ -317,6 +318,10 @@ class _GlobalCatalogueSearchSectionState
                         onTap: () => _open(LokalMusicDetailPage.album(
                           title: album.name, artist: album.artist,
                           localSongs: const [], initialOnline: true,
+                          release: data.catalogue == 'apple' && album.catalogueId.isNotEmpty
+                              ? LokalCatalogueAlbum(title: album.name,
+                                  artist: album.artist, id: album.catalogueId,
+                                  artwork: album.artworkUrl) : null,
                         )),
                       ),
                   ],
@@ -332,6 +337,8 @@ class _GlobalCatalogueSearchSectionState
                         onTap: () => _open(LokalMusicDetailPage.artist(
                           name: artist.name, localSongs: const [],
                           initialOnline: true,
+                          appleArtistId: data.catalogue == 'apple' && artist.catalogueId.isNotEmpty
+                              ? artist.catalogueId : null,
                         )),
                       ),
                   ],
