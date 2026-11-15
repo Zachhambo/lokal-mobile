@@ -135,13 +135,8 @@ class _CastingSettingsScreenState extends ConsumerState<CastingSettingsScreen> {
                   () => ref.read(castProvider.notifier).disconnect(),
                 ),
               ),
-            ],
-          ),
-        if (active?.backend == CastBackend.chromecast)
-          LokalSettingsSection(
-            title: l10n.session,
-            children: [
-              LokalSettingRow(
+              if (active.backend == CastBackend.chromecast)
+                LokalSettingRow(
                 label: lokalText('Return to this device'),
                 description: lokalText(
                   'Use when the receiver is unreachable. Its playback may continue until you stop it there.',
