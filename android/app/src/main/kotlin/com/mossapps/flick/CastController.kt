@@ -21,6 +21,19 @@ import io.flutter.plugin.common.MethodChannel
 // (CastContext creates the session); control = RemoteMediaClient on the session.
 // All interesting native state (session lifecycle, playback status, volume,
 // route changes) is forwarded to Dart via onEvent → cast_events channel.
+/** Continue sampling a receiver's terminal status after it stops playing.
+ * An application background transition must not hide FINISHED from Dart.
+ */
+internal fun shouldPollCastStatus(
+    playing: Boolean,
+    playerState: Int?,
+    idleReason: Int?,
+): Boolean = playing || (
+    playerState == MediaStatus.PLAYER_STATE_IDLE &&
+    (idleReason == MediaStatus.IDLE_REASON_FINISHED ||
+        idleReason == MediaStatus.IDLE_REASON_ERROR)
+)
+
 class CastController(private val context: Context) {
     private val mediaRouter: MediaRouter by lazy { MediaRouter.getInstance(context) }
     // ponytail: Cast SDK needs Google Play Services; null out on GMS-free
@@ -203,7 +216,18 @@ class CastController(private val context: Context) {
         val tick = object : Runnable {
             override fun run() {
                 if (connectedSession == null) return
-                if (client.isPlaying) emitStatus(client)
+                // The SDK's terminal onStatusUpdated callback may be delayed or
+                // missed while Android is backgrounded. Poll FINISHED/ERROR
+                // until Dart observes it; CastCompletionGate deduplicates by
+                // load ID so an idle receiver cannot skip multiple tracks.
+                val status = client.mediaStatus
+                if (shouldPollCastStatus(
+                        client.isPlaying,
+                        status?.playerState,
+                        status?.idleReason
+                    )) {
+                    emitStatus(client)
+                }
                 emitVolumeIfChanged()
                 handler.postDelayed(this, 1000L)
             }
