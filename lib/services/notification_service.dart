@@ -329,6 +329,7 @@ class NotificationService {
     bool isFavorite = false,
     int? color,
     bool isCasting = false,
+    bool isNativeChromecast = false,
     String? castDeviceName,
     int? castVolumePercent,
   }) async {
@@ -346,6 +347,7 @@ class NotificationService {
         'isShuffle': isShuffle,
         'isFavorite': isFavorite,
         'isCasting': isCasting,
+        'isNativeChromecast': isNativeChromecast,
         'isRemotePlayback': false,
         'isLive': false,
       };
@@ -390,6 +392,7 @@ class NotificationService {
     bool? isFavorite,
     int? color,
     bool? isCasting,
+    bool? isNativeChromecast,
     String? castDeviceName,
     int? castVolumePercent,
   }) async {
@@ -414,6 +417,7 @@ class NotificationService {
       if (effectiveColor != null) args['color'] = effectiveColor;
       if (isCasting != null) {
         args['isCasting'] = isCasting;
+        args['isNativeChromecast'] = isNativeChromecast ?? false;
         args['castDeviceName'] = castDeviceName;
         if (castVolumePercent != null) args['castVolume'] = castVolumePercent;
       }
@@ -430,6 +434,7 @@ class NotificationService {
   /// the volume slider is dragged).
   Future<void> updateCastState({
     required bool isCasting,
+    bool isNativeChromecast = false,
     String? castDeviceName,
     int? castVolumePercent,
   }) async {
@@ -437,6 +442,7 @@ class NotificationService {
     try {
       final args = <String, dynamic>{
         'isCasting': isCasting,
+        'isNativeChromecast': isNativeChromecast,
         'castDeviceName': castDeviceName,
       };
       if (castVolumePercent != null) args['castVolume'] = castVolumePercent;
