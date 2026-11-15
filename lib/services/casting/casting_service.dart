@@ -145,11 +145,26 @@ class CastingService {
     final wasPlaying = ps.isPlayingNotifier.value;
     final resumeSong = ps.currentSongNotifier.value;
     final resumePosition = ps.positionNotifier.value;
-
-    // ponytail: switching targets — the old session must die without
-    // resurrecting local playback mid-handoff.
-    await disconnect(resumeLocal: false);
-    _wasPlayingBeforeCast = wasPlaying;
+    final previousWasChromecast =
+        _activeDevice?.backend == CastBackend.chromecast;
+    if (previousWasChromecast && isChangingOutputNotifier.value) {
+      throw PlatformException(
+        code: 'CAST_BUSY',
+        message: 'Wait for the current Cast output change.',
+      );
+    }
+    if (previousWasChromecast) isChangingOutputNotifier.value = true;
+    try {
+      // Chromecast can disappear while still playing. A DLNA switch may
+      // proceed, but only a confirmed STOP can auto-start the new receiver.
+      final previousReceiverStopped = previousWasChromecast
+          ? await ps.runOutputTransition((_) =>
+              _disconnectChromecast(allowUnconfirmedDetach: true))
+          : true;
+      if (!previousWasChromecast) {
+        await disconnect(resumeLocal: false);
+      }
+      _wasPlayingBeforeCast = wasPlaying;
 
     // Pause while the local transport still owns playback. Once _activeDevice
     // is set, PlayerService.pause() delegates to the cast receiver instead,
@@ -171,13 +186,23 @@ class CastingService {
     }
 
     if (wasPlaying && resumeSong != null) {
-      await delegatePlay(resumeSong);
+      await delegatePlay(
+        resumeSong,
+        autoplay: previousReceiverStopped,
+      );
       if (resumePosition.inSeconds > 3) {
         await delegateSeek(resumePosition);
       }
     }
+    if (!previousReceiverStopped) {
+      errorNotifier.value =
+          'The previous receiver did not confirm Stop. This output is paused to avoid simultaneous playback.';
+    }
 
     unawaited(ps.refreshNotificationState());
+    } finally {
+      if (previousWasChromecast) isChangingOutputNotifier.value = false;
+    }
   }
 
   /// Select a phone-local output without leaving a phantom Cast owner behind.
@@ -593,7 +618,9 @@ class CastingService {
       final control = dev.controlUrl;
       if (control == null) return false;
       await _dlna.setUri(control, url, title: song.title);
-      await _dlna.play(control);
+      // A new receiver must remain paused when the previous Chromecast
+      // cannot confirm STOP; media URI staging alone is safe.
+      if (autoplay) await _dlna.play(control);
       _startDlnaPolling(control, dev.renderingControlUrl);
     } else {
       await _loadCastSong(song, url, autoplay: autoplay);
