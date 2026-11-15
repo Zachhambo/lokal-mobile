@@ -14,6 +14,7 @@ import 'cast_device.dart';
 import 'dlna_backend.dart';
 import 'chromecast_backend.dart';
 import 'cast_handoff.dart';
+import 'cast_session_recovery.dart';
 import 'cast_source.dart';
 import 'cast_local_file.dart';
 import 'cast_receiver_presentation.dart';
@@ -73,6 +74,8 @@ class CastingService {
   Song? _currentSong;
   Timer? _pollTimer;
   Timer? _discoverCooldown;
+  Timer? _ccSuspensionTimer;
+  int _ccSessionRevision = 0;
   StreamSubscription<Map<String, dynamic>>? _ccEventsSub;
   bool _wasPlayingBeforeCast = false;
   bool _tearingDown = false;
@@ -177,7 +180,7 @@ class CastingService {
     unawaited(ps.refreshNotificationState());
   }
 
-  Future<void> disconnect({bool resumeLocal = true}) async {
+  Future<void> disconnect({bool resumeLocal = true, bool leaveReceiver = false}) async {
     if ((Platform.isIOS || Platform.isAndroid) &&
         _activeDevice?.backend == CastBackend.chromecast) {
       if (isChangingOutputNotifier.value) {
@@ -189,9 +192,12 @@ class CastingService {
       isChangingOutputNotifier.value = true;
       try {
         await PlayerService().runOutputTransition((local) async {
-          final shouldResume = resumeLocal && local.wasPlaying;
-          await _disconnectChromecast();
-          if (shouldResume && local.isCurrent()) {
+          final stoppedReceiver = await _disconnectChromecast(
+            leaveReceiver: leaveReceiver,
+          );
+          // A lost/abandoned receiver may continue playing independently.
+          // Never auto-start the phone unless STOP was acknowledged.
+          if (resumeLocal && stoppedReceiver && local.wasPlaying && local.isCurrent()) {
             await local.resumeLocal();
             // A paused attached engine can resume the same recording at its
             // pre-Cast position. Restore the receiver's captured position too.
@@ -283,6 +289,9 @@ class CastingService {
     _presentationRevision++;
     _activeDevice = null;
     _currentSong = null;
+    _wasPlayingBeforeCast = false;
+    _receiverSkipInFlight = false;
+    _cancelCcSuspension();
     activeDeviceNotifier.value = null;
     isActiveNotifier.value = false;
     remoteVolumeNotifier.value = null;
@@ -380,18 +389,115 @@ class CastingService {
     }
   }
 
-  Future<void> _disconnectChromecast() async {
-    _tearingDown = true;
+  Future<bool> _nativeCastConnected() async {
     try {
-      // Retain ownership until the native didEnd callback confirms shutdown.
-      final device = _activeDevice;
-      if (errorNotifier.value != null && device != null) {
-        await _chromecast.connect(device);
+      // A missing or failed probe is not proof that the receiver stopped.
+      final status = await _chromecast.sessionInfo().timeout(
+        const Duration(seconds: 3),
+      );
+      return status['connected'] != false;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  void _cancelCcSuspension() {
+    _ccSuspensionTimer?.cancel();
+    _ccSuspensionTimer = null;
+    _ccSessionRevision++;
+  }
+
+  void _scheduleCcSuspensionCheck() {
+    _cancelCcSuspension();
+    if (!Platform.isAndroid ||
+        _activeDevice?.backend != CastBackend.chromecast ||
+        _tearingDown ||
+        isChangingOutputNotifier.value) {
+      return;
+    }
+    final device = _activeDevice;
+    final revision = _ccSessionRevision;
+    // Temporary SDK suspension must not immediately steal remote ownership.
+    _ccSuspensionTimer = Timer(const Duration(seconds: 10), () {
+      unawaited(() async {
+        if (revision != _ccSessionRevision ||
+            !identical(_activeDevice, device)) return;
+        if (!(await _nativeCastConnected()) &&
+            revision == _ccSessionRevision &&
+            identical(_activeDevice, device)) {
+          _recoverLostChromecast(shutdownConfirmed: false);
+        }
+      }());
+    });
+  }
+
+  void _recoverLostChromecast({required bool shutdownConfirmed}) {
+    final device = _activeDevice;
+    if (device?.backend != CastBackend.chromecast ||
+        _tearingDown ||
+        isChangingOutputNotifier.value) return;
+    // Release in PlayerService's queue, *not* the native event callback, so a
+    // delayed end event cannot release a replacement receiver or selection.
+    unawaited(
+      recoverLostCastSession(
+        serialize: (work) =>
+            PlayerService().runOutputTransition((_) => work()),
+        stillOwnsSession: () =>
+            identical(_activeDevice, device) &&
+            !_tearingDown &&
+            !isChangingOutputNotifier.value,
+        releaseRemote: () {
+          _releaseCastRemote();
+          errorNotifier.value = shutdownConfirmed
+              ? null
+              : 'Cast connection lost. Playback on the receiver may continue; stop it there if needed.';
+        },
+        cleanup: () async {
+          try {
+            if (!shutdownConfirmed) await _chromecast.abandon();
+            await CastContentServer.instance.stop();
+          } finally {
+            unawaited(PlayerService().refreshNotificationState());
+          }
+        },
+      ).catchError((_) {}),
+    );
+  }
+
+  /// True only when the native sender confirmed receiver shutdown. When the
+  /// device has vanished, detach the sender and return control to the phone
+  /// *paused*. Explicit Leave Cast uses the same safe local-only fallback.
+  Future<bool> _disconnectChromecast({bool leaveReceiver = false}) async {
+    _tearingDown = true;
+    _cancelCcSuspension();
+    try {
+      var stoppedReceiver = false;
+      if (!leaveReceiver && await _nativeCastConnected()) {
+        try {
+          await _chromecast.disconnect();
+          stoppedReceiver = true;
+        } catch (_) {
+          // The receiver might have disappeared while STOP was in flight.
+          // Keep ownership if the native session is still connected.
+          if (await _nativeCastConnected()) rethrow;
+        }
       }
-      await _chromecast.disconnect();
+      if (!stoppedReceiver) {
+        try {
+          await _chromecast.abandon();
+        } catch (_) {
+          // Local ownership must remain recoverable even after SDK teardown
+          // errors; abandon never claims that the receiver was stopped.
+        }
+      }
       _releaseCastRemote();
-      await CastContentServer.instance.stop();
-      errorNotifier.value = null;
+      try {
+        await CastContentServer.instance.stop();
+      } catch (_) {}
+      errorNotifier.value = stoppedReceiver
+          ? null
+          : 'Returned to this device. The Cast receiver may still be playing.';
+      return stoppedReceiver;
     } finally {
       _tearingDown = false;
     }
@@ -671,34 +777,26 @@ class CastingService {
       (e) {
         final event = e['event'] as String?;
         switch (event) {
+          case 'sessionStarted':
+          case 'sessionResumed':
+            _cancelCcSuspension();
+            break;
+          case 'sessionSuspended':
+            // Android may recover a brief Wi-Fi interruption. Give the SDK a
+            // bounded reconnect window before returning control to the phone.
+            // iOS suspends Cast normally in the background: never infer that
+            // its receiver powered off solely from a suspension callback.
+            _scheduleCcSuspensionCheck();
+            break;
           case 'sessionEnded':
+            _cancelCcSuspension();
             if (Platform.isIOS || Platform.isAndroid) {
-              if (e['shutdownConfirmed'] != true &&
-                  _activeDevice?.backend == CastBackend.chromecast &&
-                  !_tearingDown &&
-                  !isChangingOutputNotifier.value) {
-                errorNotifier.value = 'The Cast connection was lost. Retry Stop casting when the receiver is reachable.';
-                PlayerService().isPlayingNotifier.value = false;
-                break;
-              }
-              if (!_tearingDown &&
-                  !isChangingOutputNotifier.value &&
-                  _activeDevice?.backend == CastBackend.chromecast) {
-                final endedDevice = _activeDevice;
-                unawaited(
-                  PlayerService().runOutputTransition((_) async {
-                    if (!identical(_activeDevice, endedDevice)) return;
-                    _releaseCastRemote();
-                    await CastContentServer.instance.stop();
-                    unawaited(PlayerService().refreshNotificationState());
-                  }),
-                );
-              }
+              _recoverLostChromecast(
+                shutdownConfirmed: e['shutdownConfirmed'] == true,
+              );
               break;
             }
-            if (!_tearingDown && isActive) {
-              unawaited(disconnect());
-            }
+            if (!_tearingDown && isActive) unawaited(disconnect());
             break;
           case 'receiverMessage':
             try {
