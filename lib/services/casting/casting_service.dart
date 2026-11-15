@@ -508,7 +508,7 @@ class CastingService {
             unawaited(PlayerService().refreshNotificationState());
           }
         },
-      ).catchError((_) => false),
+      ).then<void>((_) {}).catchError((_) {}),
     );
   }
 
