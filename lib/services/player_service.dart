@@ -61,6 +61,7 @@ import 'package:flick/services/playback_cache_preferences_service.dart';
 import 'package:flick/services/remote_source_service.dart';
 import 'package:flick/services/wav_stream_audio_source.dart';
 import 'package:flick/services/casting/casting_service.dart';
+import 'package:flick/services/casting/cast_device.dart';
 import 'package:flick/services/playback_output_transition.dart';
 import 'package:flick/services/external_playback_owner.dart';
 import 'package:flick/core/utils/app_log.dart';
@@ -4752,6 +4753,8 @@ class PlayerService {
     unawaited(
       _notificationService.updateCastState(
         isCasting: _castingService.isActive,
+        isNativeChromecast:
+            _castingService.activeDevice?.backend == CastBackend.chromecast,
         castDeviceName: _castingService.activeDevice?.name,
         castVolumePercent: v == null ? null : (v * 100).round(),
       ),
