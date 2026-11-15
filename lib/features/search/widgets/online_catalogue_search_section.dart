@@ -146,6 +146,9 @@ class _OnlineCatalogueSearchSectionState
                             artist: row.artist,
                             localSongs: const [],
                             initialOnline: true,
+                            release: data.catalogue == 'apple' && row.catalogueId.isNotEmpty
+                                ? LokalCatalogueAlbum(title: row.name, artist: row.artist,
+                                    id: row.catalogueId, artwork: row.artworkUrl) : null,
                           ),
                         ),
                       )
@@ -161,6 +164,8 @@ class _OnlineCatalogueSearchSectionState
                             name: row.name,
                             localSongs: const [],
                             initialOnline: true,
+                            appleArtistId: data.catalogue == 'apple' && row.catalogueId.isNotEmpty
+                                ? row.catalogueId : null,
                           ),
                         ),
                       ),
