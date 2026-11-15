@@ -180,6 +180,40 @@ class CastingService {
     unawaited(ps.refreshNotificationState());
   }
 
+  /// Select a phone-local output without leaving a phantom Cast owner behind.
+  /// An unconfirmed remote STOP never triggers automatic local playback.
+  Future<bool> selectLocalOutputRoute(String routeId) async {
+    if (_activeDevice?.backend != CastBackend.chromecast) {
+      if (_activeDevice?.backend == CastBackend.dlna) {
+        await disconnect(resumeLocal: false);
+      }
+      return _chromecast.selectOutputRoute(routeId);
+    }
+    if (isChangingOutputNotifier.value) {
+      throw PlatformException(code: 'CAST_BUSY',
+          message: 'Wait for the current output change.');
+    }
+    isChangingOutputNotifier.value = true;
+    try {
+      return await PlayerService().runOutputTransition((local) async {
+        final stoppedReceiver = await _disconnectChromecast(
+          allowUnconfirmedDetach: true,
+        );
+        final selected = await _chromecast.selectOutputRoute(routeId);
+        if (stoppedReceiver && local.wasPlaying && local.isCurrent()) {
+          await local.resumeLocal();
+        } else if (!stoppedReceiver) {
+          errorNotifier.value =
+              'Returned to local output paused. The previous receiver may still be playing.';
+        }
+        return selected;
+      });
+    } finally {
+      isChangingOutputNotifier.value = false;
+      unawaited(PlayerService().refreshNotificationState());
+    }
+  }
+
   Future<void> disconnect({bool resumeLocal = true, bool leaveReceiver = false}) async {
     if ((Platform.isIOS || Platform.isAndroid) &&
         _activeDevice?.backend == CastBackend.chromecast) {
