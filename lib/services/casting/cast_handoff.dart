@@ -19,6 +19,7 @@ Future<void> handoffToCast({
   required Future<void> Function() connect,
   required Future<void> Function() preparePaused,
   required Future<void> Function() play,
+  bool allowAutoPlay = true,
   required Future<void> Function() disconnect,
   required void Function() claimRemote,
   required void Function() releaseRemote,
@@ -43,7 +44,9 @@ Future<void> handoffToCast({
     }
     claimRemote();
     claimed = true;
-    if (local.song != null && local.wasPlaying) await play();
+    // If the previous receiver did not confirm STOP, load this one paused.
+    // The user can explicitly resume after addressing possible dual playback.
+    if (local.song != null && local.wasPlaying && allowAutoPlay) await play();
     checkCurrent();
   } catch (error, stack) {
     try {
