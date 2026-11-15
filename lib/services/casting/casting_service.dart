@@ -433,6 +433,7 @@ class CastingService {
 
   void _recoverLostChromecast({required bool shutdownConfirmed}) {
     final device = _activeDevice;
+    final sessionRevision = _ccSessionRevision;
     if (device?.backend != CastBackend.chromecast ||
         _tearingDown ||
         isChangingOutputNotifier.value) return;
@@ -444,6 +445,7 @@ class CastingService {
             PlayerService().runOutputTransition((_) => work()),
         stillOwnsSession: () =>
             identical(_activeDevice, device) &&
+            sessionRevision == _ccSessionRevision &&
             !_tearingDown &&
             !isChangingOutputNotifier.value,
         releaseRemote: () {
