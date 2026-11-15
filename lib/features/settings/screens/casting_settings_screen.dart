@@ -137,42 +137,42 @@ class _CastingSettingsScreenState extends ConsumerState<CastingSettingsScreen> {
               ),
               if (active.backend == CastBackend.chromecast)
                 LokalSettingRow(
-                label: lokalText('Return to this device'),
-                description: lokalText(
-                  'Use when the receiver is unreachable. Its playback may continue until you stop it there.',
+                  label: lokalText('Return to this device'),
+                  description: lokalText(
+                    'Use when the receiver is unreachable. Its playback may continue until you stop it there.',
+                  ),
+                  icon: Icons.phonelink_off_rounded,
+                  enabled: !castState.isChangingOutput,
+                  onTap: () async {
+                    final leave = await showDialog<bool>(
+                      context: context,
+                      builder: (dialogContext) => AlertDialog(
+                        title: Text(lokalText('Leave Cast session?')),
+                        content: Text(lokalText(
+                          'Lokal will return to this phone without starting audio automatically. '
+                          'The receiver may still be playing; stop it separately if needed.',
+                        )),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(dialogContext).pop(false),
+                            child: Text(l10n.cancel),
+                          ),
+                          FilledButton(
+                            onPressed: () => Navigator.of(dialogContext).pop(true),
+                            child: Text(lokalText('Return to phone')),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (!mounted || leave != true) return;
+                    await _runCastAction(
+                      () => ref.read(castProvider.notifier).disconnect(
+                        resumeLocal: false,
+                        leaveReceiver: true,
+                      ),
+                    );
+                  },
                 ),
-                icon: Icons.phonelink_off_rounded,
-                enabled: !castState.isChangingOutput,
-                onTap: () async {
-                  final leave = await showDialog<bool>(
-                    context: context,
-                    builder: (dialogContext) => AlertDialog(
-                      title: Text(lokalText('Leave Cast session?')),
-                      content: Text(lokalText(
-                        'Lokal will return to this phone without starting audio automatically. '
-                        'The receiver may still be playing; stop it separately if needed.',
-                      )),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.of(dialogContext).pop(false),
-                          child: Text(l10n.cancel),
-                        ),
-                        FilledButton(
-                          onPressed: () => Navigator.of(dialogContext).pop(true),
-                          child: Text(lokalText('Return to phone')),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (!mounted || leave != true) return;
-                  await _runCastAction(
-                    () => ref.read(castProvider.notifier).disconnect(
-                      resumeLocal: false,
-                      leaveReceiver: true,
-                    ),
-                  );
-                },
-              ),
             ],
           ),
         if (active?.backend == CastBackend.chromecast)
