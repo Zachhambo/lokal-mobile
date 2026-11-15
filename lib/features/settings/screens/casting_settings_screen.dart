@@ -395,9 +395,18 @@ class _OutputSectionState extends State<_OutputSection> {
           ? null
           : () async {
               try {
-                await CastingService.instance.selectLocalOutputRoute(
+                final changed =
+                    await CastingService.instance.selectLocalOutputRoute(
                   r['id'] as String,
                 );
+                if (!changed && mounted) {
+                  LokalToast.fromSnackBar(
+                    context,
+                    SnackBar(
+                      content: Text(lokalText('This audio output is no longer available.')),
+                    ),
+                  );
+                }
                 if (mounted) _refresh();
               } catch (error) {
                 if (!mounted) return;
