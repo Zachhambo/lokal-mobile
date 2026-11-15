@@ -75,7 +75,8 @@ class CastNotifier extends Notifier<CastState> {
 
   Future<void> discover() => _service.discover();
   Future<void> connect(CastDevice device) => _service.connect(device);
-  Future<void> disconnect() => _service.disconnect();
+  Future<void> disconnect({bool resumeLocal = true, bool leaveReceiver = false}) =>
+      _service.disconnect(resumeLocal: resumeLocal, leaveReceiver: leaveReceiver);
 }
 
 final castProvider = NotifierProvider<CastNotifier, CastState>(
