@@ -8,6 +8,7 @@ import 'package:flick/services/global_catalogue_search.dart';
 import 'global_catalogue_search_section.dart';
 import 'package:flick/widgets/common/cached_image_widget.dart';
 import 'package:flick/features/konnekted/library/lokal_music_detail_page.dart';
+import 'package:flick/features/konnekted/library/lokal_online_catalogue.dart';
 import 'artist_search_portrait.dart';
 
 import '../models/search_category.dart';
