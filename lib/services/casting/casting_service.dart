@@ -225,8 +225,12 @@ class CastingService {
           allowUnconfirmedDetach: true,
         );
         final selected = await _chromecast.selectOutputRoute(routeId);
-        if (stoppedReceiver && local.wasPlaying && local.isCurrent()) {
-          await local.resumeLocal();
+        if (selected && stoppedReceiver && local.wasPlaying &&
+            local.isCurrent()) {
+          // The local engine may still be parked at the pre-Cast playhead.
+          // Seek before resuming so it cannot briefly play the old position.
+          await PlayerService().seek(local.position);
+          if (local.isCurrent()) await local.resumeLocal();
         } else if (!stoppedReceiver) {
           errorNotifier.value =
               'Returned to local output paused. The previous receiver may still be playing.';
