@@ -21,3 +21,11 @@ Future<bool> recoverLostCastSession({
   });
   return released;
 }
+
+/// Reject delayed native callbacks from a replaced Cast receiver. A missing
+/// identity is accepted only for legacy sender events without the new field.
+bool castEventMatchesReceiver({
+  required String? reportedDeviceId,
+  required String? activeDeviceId,
+}) => reportedDeviceId == null ||
+    (activeDeviceId != null && reportedDeviceId == activeDeviceId);
