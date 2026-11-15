@@ -394,8 +394,22 @@ class _OutputSectionState extends State<_OutputSection> {
       onTap: selected
           ? null
           : () async {
-              await ChromecastBackend().selectOutputRoute(r['id'] as String);
-              _refresh();
+              try {
+                await CastingService.instance.selectLocalOutputRoute(
+                  r['id'] as String,
+                );
+                if (mounted) _refresh();
+              } catch (error) {
+                if (!mounted) return;
+                final message = error is PlatformException &&
+                        error.code.startsWith('CAST_')
+                    ? error.message ?? l10n.error3
+                    : l10n.error3;
+                LokalToast.fromSnackBar(
+                  context,
+                  SnackBar(content: Text(message)),
+                );
+              }
             },
     );
   }
