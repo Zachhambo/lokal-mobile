@@ -310,15 +310,23 @@ class CastingService {
     errorNotifier.value = null;
     final ps = PlayerService();
     var selectedDevice = device;
+    var previousReceiverStopped = true;
     try {
       await ps.runOutputTransition((local) async {
         if (_activeDevice?.backend == CastBackend.chromecast) {
-          await _disconnectChromecast();
+          // The user explicitly requested a different receiver. If the old
+          // receiver cannot acknowledge STOP, detach its sender rather than
+          // blocking all further output changes. The new receiver must start
+          // paused until the user explicitly plays it.
+          previousReceiverStopped = await _disconnectChromecast(
+            allowUnconfirmedDetach: true,
+          );
         } else {
           await disconnect(resumeLocal: false);
         }
         await handoffToCast(
           local: local,
+          allowAutoPlay: previousReceiverStopped,
           connect: () async {
             await _chromecast.connect(device);
             try {
@@ -360,7 +368,11 @@ class CastingService {
           ),
           releaseRemote: _releaseCastRemote,
         );
-        ps.isPlayingNotifier.value = local.wasPlaying && local.song != null;
+        ps.isPlayingNotifier.value =
+            previousReceiverStopped && local.wasPlaying && local.song != null;
+        errorNotifier.value = previousReceiverStopped
+            ? null
+            : 'The previous receiver did not confirm Stop. This receiver is paused to avoid playing on both. Stop the previous receiver separately if necessary.';
         if (local.song != null) unawaited(_presentReceiverSong(local.song!));
         // A volume query is ancillary; its failure cannot undo a confirmed load.
         try {
@@ -469,19 +481,31 @@ class CastingService {
   /// True only when the native sender confirmed receiver shutdown. When the
   /// device has vanished, detach the sender and return control to the phone
   /// *paused*. Explicit Leave Cast uses the same safe local-only fallback.
-  Future<bool> _disconnectChromecast({bool leaveReceiver = false}) async {
+  Future<bool> _disconnectChromecast({
+    bool leaveReceiver = false,
+    bool allowUnconfirmedDetach = false,
+  }) async {
     _tearingDown = true;
     _cancelCcSuspension();
     try {
       var stoppedReceiver = false;
       if (!leaveReceiver && await _nativeCastConnected()) {
         try {
-          await _chromecast.disconnect();
+          final disconnect = _chromecast.disconnect();
+          // Cancel the native pending operation via abandon() when switching
+          // to a different receiver; otherwise a dead device can hold the
+          // output selector hostage for the SDK's entire shutdown timeout.
+          if (allowUnconfirmedDetach) {
+            await disconnect.timeout(const Duration(seconds: 8));
+          } else {
+            await disconnect;
+          }
           stoppedReceiver = true;
         } catch (_) {
-          // The receiver might have disappeared while STOP was in flight.
-          // Keep ownership if the native session is still connected.
-          if (await _nativeCastConnected()) rethrow;
+          // A normal Stop request must still refuse automatic dual playback.
+          // A deliberate receiver switch is allowed to detach the old sender,
+          // but the destination stays paused until the user resumes.
+          if (!allowUnconfirmedDetach && await _nativeCastConnected()) rethrow;
         }
       }
       if (!stoppedReceiver) {
