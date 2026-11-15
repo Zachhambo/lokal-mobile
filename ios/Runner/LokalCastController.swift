@@ -52,6 +52,7 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
       }
       connect(id, reply)
     case "disconnect": disconnect(reply)
+    case "abandon": abandon(reply)
     case "getVolume":
       guard let session = connectedSession else {
         reject(reply, "CAST_DISCONNECTED", "The Cast receiver is not connected."); return
@@ -186,6 +187,20 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
     }
   }
 
+  /// Detach our sender only. The receiver may still be playing; Flutter uses
+  /// this after confirmed connection loss or an explicit user choice.
+  private func abandon(_ reply: @escaping Reply) {
+    finishConnection(.failure(Failure(code: "CAST_CANCELLED", message: "The Cast sender was detached.")))
+    finishDisconnect(.failure(Failure(code: "CAST_CANCELLED", message: "The Cast sender was detached.")))
+    detach()
+    ownedDeviceID = nil
+    receiverMayBePlaying = false
+    if let manager = context?.sessionManager, manager.currentSession != nil {
+      _ = manager.endSessionAndStopCasting(false)
+    }
+    reply(.success(nil))
+  }
+
   private func disconnect(_ reply: @escaping Reply) {
     guard disconnectReply == nil else {
       reject(reply, "CAST_BUSY", "A Cast disconnection is already running."); return
@@ -315,7 +330,10 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
   }
 
   private func sessionInfo() -> [String: Any] {
-    var info: [String: Any] = ["name": connectedSession?.device.friendlyName ?? "Cast receiver"]
+    var info: [String: Any] = [
+      "connected": connectedSession != nil,
+      "name": connectedSession?.device.friendlyName ?? "Cast receiver",
+    ]
     if let client = client, let status = client.mediaStatus {
       rememberMediaIdentity(status)
       info["loadId"] = reportedLoadID ?? ""
@@ -385,6 +403,8 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
   }
 
   func sessionManager(_ sessionManager: GCKSessionManager, didEnd session: GCKCastSession, withError error: Error?) {
+    // An old session's late callback cannot terminate a new sender handoff.
+    guard session.device.uniqueID == ownedDeviceID else { return }
     detach()
     if error == nil { receiverMayBePlaying = false }
     if !receiverMayBePlaying { ownedDeviceID = nil }
@@ -398,6 +418,7 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
   }
 
   func sessionManager(_ sessionManager: GCKSessionManager, didSuspend session: GCKCastSession, with reason: GCKConnectionSuspendReason) {
+    guard session.device.uniqueID == ownedDeviceID else { return }
     detach()
     // Never emit sessionEnded here: suspension must not resume local playback.
     onEvent?(["event": "sessionSuspended"])
