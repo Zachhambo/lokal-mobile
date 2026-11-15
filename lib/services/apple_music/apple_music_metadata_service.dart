@@ -647,11 +647,17 @@ class AppleMusicMetadataService {
   Future<List<AppleMusicAlbumMatch>> getArtistReleases(
     String name, {
     String? storefront,
+    String? artistId,
     bool refresh = false,
   }) async {
-    final artist = await resolveArtist(name, storefront: storefront, refresh: refresh);
+    // Exact Apple catalogue selections never resolve again by display name.
+    final explicitId = artistId?.trim() ?? '';
+    if (explicitId.isNotEmpty && !RegExp(r'^\d{1,20}$').hasMatch(explicitId)) return const [];
+    final artist = explicitId.isNotEmpty
+        ? AppleMusicArtist(artistId: explicitId, name: name)
+        : await resolveArtist(name, storefront: storefront, refresh: refresh);
     if (artist == null || artist.artistId.isEmpty ||
-        _normalize(artist.name) != _normalize(name)) return const [];
+        (explicitId.isEmpty && _normalize(artist.name) != _normalize(name))) return const [];
     final sf = _primaryStorefront(storefront);
     return await _cache.fetch<List<AppleMusicAlbumMatch>>(
           key: _key('artist-releases-v2', '${artist.artistId}|$sf'),

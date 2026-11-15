@@ -1,0 +1,42 @@
+name: Mobile catalogue detail identity
+
+on:
+  pull_request:
+    paths:
+      - 'lib/features/konnekted/library/lokal_music_detail_page.dart'
+      - 'lib/features/konnekted/library/lokal_online_catalogue.dart'
+      - 'lib/features/search/widgets/global_catalogue_search_section.dart'
+      - 'lib/features/search/widgets/online_catalogue_search_section.dart'
+      - 'lib/services/apple_music/apple_music_metadata_service.dart'
+      - 'lib/services/global_catalogue_search.dart'
+      - 'test/features/catalogue/artist_releases_test.dart'
+      - 'test/services/global_catalogue_search_test.dart'
+      - '.github/workflows/catalogue-details-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  catalogue:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/android-toolchain
+      - name: Analyze catalogue models and detail pages
+        run: |
+          set -euo pipefail
+          for file in \
+            lib/services/global_catalogue_search.dart \
+            lib/services/apple_music/apple_music_metadata_service.dart \
+            lib/features/konnekted/library/lokal_online_catalogue.dart \
+            lib/features/konnekted/library/lokal_music_detail_page.dart \
+            lib/features/search/widgets/global_catalogue_search_section.dart \
+            lib/features/search/widgets/online_catalogue_search_section.dart; do
+            dart analyze --no-fatal-warnings "$file"
+          done
+      - name: Verify IDs and release discovery
+        run: flutter test --no-pub test/features/catalogue/artist_releases_test.dart test/services/global_catalogue_search_test.dart

@@ -142,8 +142,10 @@ class LokalOnlineCatalogue {
        _albumArtwork = albumArtwork,
        _youtubeReleases = youtubeReleases;
   static final instance = LokalOnlineCatalogue();
-  void invalidateArtist(String name) =>
-      _cache.remove('artist:${recommendationKey(name)}');
+  void invalidateArtist(String name) {
+    final prefix = 'artist:${recommendationKey(name)}:';
+    _cache.removeWhere((key, _) => key.startsWith(prefix));
+  }
 
   final AppleMusicMetadataService _apple;
   final Future<List<OnlineSource>> Function(http.Client) _sources;
@@ -202,7 +204,8 @@ class LokalOnlineCatalogue {
   Future<LokalCataloguePage> artist(
     String name, {
     bool refresh = false,
-  }) => _load('artist:${recommendationKey(name)}', refresh, () async {
+    String? appleArtistId,
+  }) => _load('artist:${recommendationKey(name)}:${appleArtistId ?? ''}', refresh, () async {
     AppleMusicArtistData? data;
     List<AppleMusicAlbumMatch> releases = const [];
     List<AppleMusicAlbumMatch> artistReleases = const [];
@@ -214,28 +217,43 @@ class LokalOnlineCatalogue {
     await Future.wait([
       () async {
         try {
-          data = await _apple.getArtistData(
-            name, topSongLimit: 25, refresh: refresh,
-          );
+          if (appleArtistId != null && RegExp(r'^\d{1,20}$').hasMatch(appleArtistId)) {
+            final (info, topSongs) = await (
+              _apple.getArtistInfo(appleArtistId, refresh: refresh),
+              _apple.getTopSongs(appleArtistId, limit: 25, refresh: refresh),
+            ).wait;
+            data = AppleMusicArtistData(
+              artist: AppleMusicArtist(artistId: appleArtistId, name: name),
+              info: info, topSongs: topSongs,
+            );
+          } else {
+            data = await _apple.getArtistData(
+              name, topSongLimit: 25, refresh: refresh,
+            );
+          }
         } catch (_) {}
       }(),
       () async {
         try {
-          releases = await _apple.searchAlbums(
-            name, limit: 100, refresh: refresh,
-          );
+          // A selected ID is authoritative. Don't mix a namesake's text search.
+          if (appleArtistId == null) {
+            releases = await _apple.searchAlbums(
+              name, limit: 100, refresh: refresh,
+            );
+          }
         } catch (_) {}
       }(),
       () async {
         try {
           artistReleases = await _apple.getArtistReleases(
-            name, refresh: refresh,
+            name, artistId: appleArtistId, refresh: refresh,
           );
         } catch (_) {}
       }(),
       () async {
         try {
-          youtubeReleases = await _loadYoutubeReleases(name);
+          // A YouTube name search cannot prove an Apple artist identity.
+          if (appleArtistId == null) youtubeReleases = await _loadYoutubeReleases(name);
         } catch (_) { /* Keep Apple Music releases if YouTube is offline. */ }
       }(),
     ]);
@@ -341,7 +359,7 @@ class LokalOnlineCatalogue {
         ? 'Apple Music'
         : (data == null && releases.isEmpty && artistReleases.isEmpty
             ? 'YouTube Music' : 'Apple Music + YouTube Music');
-    if (tracks.isEmpty) {
+    if (tracks.isEmpty && appleArtistId == null) {
       final found = await _search(name, artist: name);
       if (found.$1.isNotEmpty) {
         tracks = found.$1;
@@ -363,7 +381,8 @@ class LokalOnlineCatalogue {
       }
     }
     var portrait = data?.info?.imageUrl ?? '';
-    if (portrait.isEmpty) {
+    // Do not display a namesake's image on an ID-identified artist page.
+    if (portrait.isEmpty && appleArtistId == null) {
       final client = http.Client();
       try {
         portrait = await DiscoveryArtworkResolver(DiscoveryHttp(client))
@@ -424,7 +443,8 @@ class LokalOnlineCatalogue {
       var album = data == null
           ? release
           : LokalCatalogueAlbum.fromApple(data.match);
-      if (discoveryImageUrl(album?.artwork).isEmpty) {
+      // With a source album ID, an unrelated text-search cover is not proof.
+      if (release?.id == null && discoveryImageUrl(album?.artwork).isEmpty) {
         String cover = '';
         final client = http.Client();
         try {
@@ -484,6 +504,11 @@ class LokalOnlineCatalogue {
               ),
           ],
         );
+      }
+      // Never replace a source-identified album with loosely matched tracks.
+      if (release?.id != null) {
+        return LokalCataloguePage(albums: [if (album != null) album],
+          url: album?.url ?? '', label: 'Apple Music');
       }
       final found = await _search(
         '$title ${splitArtistCredits(artist).firstOrNull ?? artist}',

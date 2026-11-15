@@ -8,6 +8,7 @@ import 'package:flick/services/global_catalogue_search.dart';
 import 'global_catalogue_search_section.dart';
 import 'package:flick/widgets/common/cached_image_widget.dart';
 import 'package:flick/features/konnekted/library/lokal_music_detail_page.dart';
+import 'package:flick/features/konnekted/library/lokal_online_catalogue.dart';
 import 'artist_search_portrait.dart';
 
 import '../models/search_category.dart';
@@ -145,6 +146,9 @@ class _OnlineCatalogueSearchSectionState
                             artist: row.artist,
                             localSongs: const [],
                             initialOnline: true,
+                            release: data.catalogue == 'apple' && row.catalogueId.isNotEmpty
+                                ? LokalCatalogueAlbum(title: row.name, artist: row.artist,
+                                    id: row.catalogueId, artwork: row.artworkUrl) : null,
                           ),
                         ),
                       )
@@ -160,6 +164,8 @@ class _OnlineCatalogueSearchSectionState
                             name: row.name,
                             localSongs: const [],
                             initialOnline: true,
+                            appleArtistId: data.catalogue == 'apple' && row.catalogueId.isNotEmpty
+                                ? row.catalogueId : null,
                           ),
                         ),
                       ),

@@ -42,6 +42,15 @@ void main() {
     expect(results.songs.single.toString(), isNot(contains('signed-preview')));
   });
 
+  test('same-name artists with distinct catalogue IDs stay distinct', () {
+    final rows = deduplicateCatalogueArtists([
+      const GlobalCatalogueArtist(name: 'Bones', catalogueId: '123'),
+      const GlobalCatalogueArtist(name: 'Bones', catalogueId: '456'),
+      const GlobalCatalogueArtist(name: 'Bones', catalogueId: '123'),
+    ]);
+    expect(rows.map((row) => row.catalogueId), ['123', '456']);
+  });
+
   test('Spotify Pathfinder fallback extracts tracks when REST denies cookie session', () {
     final results = parseSpotifyPathfinder({
       'searchV2': {
