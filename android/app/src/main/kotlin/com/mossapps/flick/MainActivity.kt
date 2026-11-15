@@ -872,6 +872,7 @@ class MainActivity: FlutterActivity() {
                         }
                     }
                     val isCasting = call.argument<Boolean>("isCasting") ?: false
+                    val isNativeChromecast = call.argument<Boolean>("isNativeChromecast") ?: false
                     val isLive = call.argument<Boolean>("isLive") ?: false
                     val castDeviceName = call.argument<String>("castDeviceName")
                     val castVolume = call.argument<Int>("castVolume")
@@ -887,6 +888,7 @@ class MainActivity: FlutterActivity() {
                         putExtra("isShuffle", isShuffle)
                         putExtra("isFavorite", isFavorite)
                         putExtra("isCasting", isCasting)
+                        putExtra("isNativeChromecast", isNativeChromecast)
                         putExtra("isRemotePlayback", call.argument<Boolean>("isRemotePlayback") ?: false)
                         putExtra("isLive", isLive)
                         castDeviceName?.let { putExtra("castDeviceName", it) }
@@ -931,6 +933,7 @@ class MainActivity: FlutterActivity() {
                         }
                     }
                     val isCasting = call.argument<Boolean>("isCasting")
+                    val isNativeChromecast = call.argument<Boolean>("isNativeChromecast")
                     val isLive = call.argument<Boolean>("isLive")
                     val castDeviceName = call.argument<String>("castDeviceName")
                     val castVolume = call.argument<Int>("castVolume")
@@ -946,6 +949,7 @@ class MainActivity: FlutterActivity() {
                         isShuffle?.let { putExtra("isShuffle", it) }
                         isFavorite?.let { putExtra("isFavorite", it) }
                         isCasting?.let { putExtra("isCasting", it) }
+                        isNativeChromecast?.let { putExtra("isNativeChromecast", it) }
                         call.argument<Boolean>("isRemotePlayback")?.let { putExtra("isRemotePlayback", it) }
                         isLive?.let { putExtra("isLive", it) }
                         castDeviceName?.let { putExtra("castDeviceName", it) }
@@ -1299,6 +1303,10 @@ class MainActivity: FlutterActivity() {
                 "disconnect" -> {
                     if (cc == null) result.error("CAST_UNAVAILABLE", "Google Cast is unavailable.", null)
                     else cc.disconnect(result)
+                }
+                "abandon" -> {
+                    if (cc == null) result.error("CAST_UNAVAILABLE", "Google Cast is unavailable.", null)
+                    else cc.abandon(result)
                 }
                 "load" -> {
                     if (cc == null) result.error("CAST_UNAVAILABLE", "Google Cast is unavailable.", null)

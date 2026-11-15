@@ -8,7 +8,11 @@ on:
       - 'android/app/src/test/kotlin/com/mossapps/flick/PlaybackStagingGateTest.kt'
       - 'android/app/src/test/kotlin/com/mossapps/flick/Cast*.kt'
       - 'lib/services/casting/**'
+      - 'lib/features/player/widgets/playback_output_picker.dart'
+      - 'lib/features/player/screens/full_player_screen.dart'
+      - 'lib/providers/cast_provider.dart'
       - 'test/services/casting/**'
+      - 'test/features/player/playback_output_picker_test.dart'
       - '.github/workflows/android-cast.yml'
   workflow_dispatch:
 permissions:
@@ -27,7 +31,7 @@ jobs:
           python3 -m pip install --disable-pip-version-check Pillow
           python3 tool/gen_lokal_launcher_icons.py
       - name: Verify confirmed handoff, SAF staging and receiver HTTP requests
-        run: flutter test --no-pub test/services/casting
+        run: flutter test --no-pub test/services/casting test/features/player/playback_output_picker_test.dart
       - name: Compile Android sender and verify native acknowledgement lifecycle
         run: bash android/gradlew -p android :app:testFullDebugUnitTest --tests com.mossapps.flick.CastPendingReplyTest --tests com.mossapps.flick.MusicMediaSessionTest --tests com.mossapps.flick.PlaybackStagingGateTest --console=plain --no-daemon
       - name: Preserve native Cast test results

@@ -22,6 +22,7 @@ class _Handoff {
   String? failAt;
   String? invalidateAt;
   bool failShutdown = false;
+  bool allowAutoPlay = true;
 
   Future<void> step(String name) async {
     calls.add(name);
@@ -56,6 +57,7 @@ class _Handoff {
       await step('preparePaused');
       remotePlaying = false;
     },
+    allowAutoPlay: allowAutoPlay,
     play: () async {
       expect(
         localPlaying,
@@ -99,6 +101,23 @@ void main() {
       expect(h.claimed, isTrue);
     },
   );
+
+  test('receiver switch stops old output before starting the next', () async {
+    final h = _Handoff();
+    await h.run();
+    expect(h.calls, ['connect', 'preparePaused', 'pauseLocal', 'claim', 'play']);
+    expect(h.remotePlaying, isTrue);
+  });
+
+  test('unconfirmed previous STOP allows only a paused new receiver', () async {
+    final h = _Handoff()..allowAutoPlay = false;
+    await h.run();
+    expect(h.calls, ['connect', 'preparePaused', 'pauseLocal', 'claim']);
+    expect(h.claimed, isTrue);
+    expect(h.remotePlaying, isFalse,
+      reason: 'new receiver must not auto-start if old receiver may play');
+    expect(h.localPlaying, isFalse);
+  });
 
   test('paused source stays paused on both outputs', () async {
     final h = _Handoff()

@@ -26,7 +26,11 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
   private var disconnectReply: Reply?
   private var disconnectDeadline: DispatchWorkItem?
   private var ownedDeviceID: String?
+  private weak var ownedSession: GCKCastSession?
   private var receiverMayBePlaying = false
+  // Sender disconnection is not proof of receiver STOP. Only a validated
+  // media STOP (or an explicitly empty session) may authorize local autoplay.
+  private var receiverStopAcknowledged = false
   private var requests: [UUID: LokalCastRequest] = [:]
 
   #if DEBUG
@@ -52,6 +56,7 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
       }
       connect(id, reply)
     case "disconnect": disconnect(reply)
+    case "abandon": abandon(reply)
     case "getVolume":
       guard let session = connectedSession else {
         reject(reply, "CAST_DISCONNECTED", "The Cast receiver is not connected."); return
@@ -155,6 +160,7 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
     guard connectionReply == nil, disconnectReply == nil else {
       reject(reply, "CAST_BUSY", "Wait for the current Cast connection change."); return
     }
+    receiverStopAcknowledged = false
     let context = prepare()
     let manager = context.sessionManager
     if manager.hasConnectedCastSession(), let session = manager.currentCastSession {
@@ -186,10 +192,27 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
     }
   }
 
+  /// Detach our sender only. The receiver may still be playing; Flutter uses
+  /// this after confirmed connection loss or an explicit user choice.
+  private func abandon(_ reply: @escaping Reply) {
+    finishConnection(.failure(Failure(code: "CAST_CANCELLED", message: "The Cast sender was detached.")))
+    finishDisconnect(.failure(Failure(code: "CAST_CANCELLED", message: "The Cast sender was detached.")))
+    detach()
+    ownedDeviceID = nil
+    ownedSession = nil
+    receiverMayBePlaying = false
+    receiverStopAcknowledged = false
+    if let manager = context?.sessionManager, manager.currentSession != nil {
+      _ = manager.endSessionAndStopCasting(false)
+    }
+    reply(.success(nil))
+  }
+
   private func disconnect(_ reply: @escaping Reply) {
     guard disconnectReply == nil else {
       reject(reply, "CAST_BUSY", "A Cast disconnection is already running."); return
     }
+    receiverStopAcknowledged = false
     discoveryDeadline?.cancel()
     discoveryDeadline = nil
     let discovery = discoveryReply
@@ -203,7 +226,8 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
       }
       detach()
       ownedDeviceID = nil
-      reply(.success(nil)); return
+      // No current session means STOP was not delivered by this call.
+      reply(.success(false)); return
     }
     disconnectReply = reply
     let deadline = DispatchWorkItem { [weak self] in
@@ -225,11 +249,14 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
         switch result {
         case .success:
           self.receiverMayBePlaying = false
+          self.receiverStopAcknowledged = true
           self.endConfirmedSession(manager)
         case .failure(let error): self.finishDisconnect(.failure(error))
         }
       }
     } else {
+      // This sender has never started receiver media in this session.
+      receiverStopAcknowledged = true
       endConfirmedSession(manager)
     }
   }
@@ -281,8 +308,12 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
 
   private func attach(_ session: GCKCastSession) {
     detach()
+    ownedSession = session
     let channel = LokalReceiverChannel(namespace: "urn:x-cast:app.lokal.cast")
-    channel.message = { [weak self] text in self?.onEvent?(["event": "receiverMessage", "data": text]) }
+    let routeID = session.device.uniqueID
+    channel.message = { [weak self] text in
+      self?.onEvent?(["event": "receiverMessage", "deviceId": routeID, "data": text])
+    }
     session.add(channel)
     receiverChannel = channel
     client = session.remoteMediaClient
@@ -315,7 +346,10 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
   }
 
   private func sessionInfo() -> [String: Any] {
-    var info: [String: Any] = ["name": connectedSession?.device.friendlyName ?? "Cast receiver"]
+    var info: [String: Any] = [
+      "connected": connectedSession != nil,
+      "name": connectedSession?.device.friendlyName ?? "Cast receiver",
+    ]
     if let client = client, let status = client.mediaStatus {
       rememberMediaIdentity(status)
       info["loadId"] = reportedLoadID ?? ""
@@ -342,14 +376,16 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
       guard seconds.isFinite, seconds >= 0 else { return 0 }
       return Int(min(seconds, Double(Int32.max)) * 1000)
     }
-    onEvent?(["event": "status", "position": milliseconds(client.approximateStreamPosition()),
+    onEvent?(["event": "status", "deviceId": session.device.uniqueID,
+              "position": milliseconds(client.approximateStreamPosition()),
               "duration": milliseconds(status.mediaInformation?.streamDuration ?? 0),
               "playing": status.playerState == .playing,
               "loadId": reportedLoadID ?? "",
               "trackId": reportedTrackID ?? "",
               "finished": status.playerState == .idle && status.idleReason == .finished,
               "sourceError": status.playerState == .idle && status.idleReason == .error])
-    onEvent?(["event": "volume", "volume": Double(session.currentDeviceVolume)])
+    onEvent?(["event": "volume", "deviceId": session.device.uniqueID,
+              "volume": Double(session.currentDeviceVolume)])
   }
 
   private func reject(_ reply: Reply, _ code: String, _ message: String) {
@@ -376,7 +412,7 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
     guard session.device.uniqueID == ownedDeviceID, disconnectReply == nil else { return }
     attach(session)
     finishConnection(.success(nil))
-    onEvent?(["event": "sessionStarted"])
+    onEvent?(["event": "sessionStarted", "deviceId": session.device.uniqueID])
   }
 
   func sessionManager(_ sessionManager: GCKSessionManager, didFailToStart session: GCKCastSession, withError error: Error) {
@@ -385,6 +421,12 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
   }
 
   func sessionManager(_ sessionManager: GCKSessionManager, didEnd session: GCKCastSession, withError error: Error?) {
+    // A late callback for the same physical receiver must not tear down a
+    // newer Cast session that has replaced it.
+    guard ownedSession === session, session.device.uniqueID == ownedDeviceID else { return }
+    let confirmed = disconnectReply != nil && receiverStopAcknowledged && error == nil
+    receiverStopAcknowledged = false
+    ownedSession = nil
     detach()
     if error == nil { receiverMayBePlaying = false }
     if !receiverMayBePlaying { ownedDeviceID = nil }
@@ -392,21 +434,23 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
     if receiverMayBePlaying {
       finishDisconnect(.failure(Failure(code: "CAST_UNCERTAIN", message: "The connection ended before receiver shutdown was confirmed.")))
     } else {
-      finishDisconnect(.success(nil))
+      finishDisconnect(.success(confirmed))
     }
-    onEvent?(["event": "sessionEnded", "shutdownConfirmed": !receiverMayBePlaying])
+    onEvent?(["event": "sessionEnded", "deviceId": session.device.uniqueID,
+              "shutdownConfirmed": confirmed])
   }
 
   func sessionManager(_ sessionManager: GCKSessionManager, didSuspend session: GCKCastSession, with reason: GCKConnectionSuspendReason) {
+    guard ownedSession === session, session.device.uniqueID == ownedDeviceID else { return }
     detach()
     // Never emit sessionEnded here: suspension must not resume local playback.
-    onEvent?(["event": "sessionSuspended"])
+    onEvent?(["event": "sessionSuspended", "deviceId": session.device.uniqueID])
   }
 
   func sessionManager(_ sessionManager: GCKSessionManager, didResume session: GCKCastSession) {
     guard session.device.uniqueID == ownedDeviceID, disconnectReply == nil else { return }
     attach(session)
-    onEvent?(["event": "sessionResumed"])
+    onEvent?(["event": "sessionResumed", "deviceId": session.device.uniqueID])
   }
 
   func remoteMediaClient(_ client: GCKRemoteMediaClient, didUpdate mediaStatus: GCKMediaStatus?) {

@@ -135,6 +135,44 @@ class _CastingSettingsScreenState extends ConsumerState<CastingSettingsScreen> {
                   () => ref.read(castProvider.notifier).disconnect(),
                 ),
               ),
+              if (active.backend == CastBackend.chromecast)
+                LokalSettingRow(
+                  label: lokalText('Return to this device'),
+                  description: lokalText(
+                    'Use when the receiver is unreachable. Its playback may continue until you stop it there.',
+                  ),
+                  icon: Icons.phonelink_off_rounded,
+                  enabled: !castState.isChangingOutput,
+                  onTap: () async {
+                    final leave = await showDialog<bool>(
+                      context: context,
+                      builder: (dialogContext) => AlertDialog(
+                        title: Text(lokalText('Leave Cast session?')),
+                        content: Text(lokalText(
+                          'Lokal will return to this phone without starting audio automatically. '
+                          'The receiver may still be playing; stop it separately if needed.',
+                        )),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(dialogContext).pop(false),
+                            child: Text(l10n.cancel),
+                          ),
+                          FilledButton(
+                            onPressed: () => Navigator.of(dialogContext).pop(true),
+                            child: Text(lokalText('Return to phone')),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (!mounted || leave != true) return;
+                    await _runCastAction(
+                      () => ref.read(castProvider.notifier).disconnect(
+                        resumeLocal: false,
+                        leaveReceiver: true,
+                      ),
+                    );
+                  },
+                ),
             ],
           ),
         if (active?.backend == CastBackend.chromecast)
@@ -356,8 +394,31 @@ class _OutputSectionState extends State<_OutputSection> {
       onTap: selected
           ? null
           : () async {
-              await ChromecastBackend().selectOutputRoute(r['id'] as String);
-              _refresh();
+              try {
+                final changed =
+                    await CastingService.instance.selectLocalOutputRoute(
+                  r['id'] as String,
+                );
+                if (!changed && mounted) {
+                  LokalToast.fromSnackBar(
+                    context,
+                    SnackBar(
+                      content: Text(lokalText('This audio output is no longer available.')),
+                    ),
+                  );
+                }
+                if (mounted) _refresh();
+              } catch (error) {
+                if (!mounted) return;
+                final message = error is PlatformException &&
+                        error.code.startsWith('CAST_')
+                    ? error.message ?? l10n.error3
+                    : l10n.error3;
+                LokalToast.fromSnackBar(
+                  context,
+                  SnackBar(content: Text(message)),
+                );
+              }
             },
     );
   }

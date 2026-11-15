@@ -19,7 +19,7 @@ internal class CastPendingReply(
         }
     }
     init { handler.postDelayed(timeout, timeoutMs) }
-    fun succeed() = finish { result.success(null) }
+    fun succeed(value: Any? = null) = finish { result.success(value) }
     fun fail(code: String, message: String) = finish { result.error(code, message, null) }
     private fun finish(reply: () -> Unit) {
         if (finished) return

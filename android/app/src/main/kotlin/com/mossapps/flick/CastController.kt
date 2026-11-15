@@ -21,6 +21,19 @@ import io.flutter.plugin.common.MethodChannel
 // (CastContext creates the session); control = RemoteMediaClient on the session.
 // All interesting native state (session lifecycle, playback status, volume,
 // route changes) is forwarded to Dart via onEvent → cast_events channel.
+/** Continue sampling a receiver's terminal status after it stops playing.
+ * An application background transition must not hide FINISHED from Dart.
+ */
+internal fun shouldPollCastStatus(
+    playing: Boolean,
+    playerState: Int?,
+    idleReason: Int?,
+): Boolean = playing || (
+    playerState == MediaStatus.PLAYER_STATE_IDLE &&
+    (idleReason == MediaStatus.IDLE_REASON_FINISHED ||
+        idleReason == MediaStatus.IDLE_REASON_ERROR)
+)
+
 class CastController(private val context: Context) {
     private val mediaRouter: MediaRouter by lazy { MediaRouter.getInstance(context) }
     // ponytail: Cast SDK needs Google Play Services; null out on GMS-free
@@ -41,6 +54,8 @@ class CastController(private val context: Context) {
     var onEvent: ((Map<String, Any?>) -> Unit)? = null
 
     private var connectedSession: CastSession? = null
+    private var activeRouteId: String? = null
+    private var abandonedSession: CastSession? = null
     private var mediaClientCallback: RemoteMediaClient.Callback? = null
     private var attachedClient: RemoteMediaClient? = null
     private var lastVolume: Double? = null
@@ -51,47 +66,60 @@ class CastController(private val context: Context) {
     private var pendingDisconnect: CastPendingReply? = null
     private var pendingRouteId: String? = null
     private var disconnectRequested = false
+    private var abandoningSession = false
+    // Ending a sender session is not a receiver STOP acknowledgement.
+    private var receiverStopAcknowledged = false
     private var connectionMayBeStarting = false
     private val mediaReplies = mutableSetOf<CastPendingReply>()
 
     private fun sessionReady(session: CastSession, event: String) {
+        if (abandonedSession === session) return
         if (disconnectRequested) {
-            castContext?.sessionManager?.endCurrentSession(true)
+            // Abandon means leave sender-only: never STOP the remote on a
+            // late resume/start callback after the phone already returned.
+            if (!abandoningSession) castContext?.sessionManager?.endCurrentSession(true)
             return
         }
         if (pendingRouteId != null && mediaRouter.selectedRoute.id != pendingRouteId) return
         connectedSession = session
+        activeRouteId = mediaRouter.selectedRoute.id
         connectionMayBeStarting = false
         attachMediaClientListener(session)
+        val routeId = activeRouteId
         session.setMessageReceivedCallbacks(receiverNamespace) { _, _, message ->
-            try { emit(mapOf("event" to "receiverMessage", "data" to message)) } catch (_: Exception) { }
+            try { emit(mapOf("event" to "receiverMessage", "data" to message, "deviceId" to routeId)) } catch (_: Exception) { }
         }
         pendingConnect?.succeed()
-        emit(mapOf("event" to event))
+        emit(mapOf("event" to event, "deviceId" to routeId))
     }
 
     private fun sessionFailed(code: Int) {
         connectionMayBeStarting = false
         pendingConnect?.fail("CAST_CONNECT", "The receiver could not start a Cast session (status $code).")
-        if (disconnectRequested) pendingDisconnect?.succeed()
+        // Failed to establish a session never proves that the receiver stopped.
+        if (disconnectRequested) pendingDisconnect?.succeed(false)
     }
 
     private val sessionListener = object : SessionManagerListener<CastSession> {
         override fun onSessionStarted(session: CastSession, sessionId: String) = sessionReady(session, "sessionStarted")
         override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) = sessionReady(session, "sessionResumed")
         override fun onSessionEnded(session: CastSession, error: Int) {
+            if (abandonedSession === session) { abandonedSession = null; return }
             if (connectedSession != null && connectedSession !== session) return
+            val endedRoute = activeRouteId
             connectedSession = null
+            activeRouteId = null
             connectionMayBeStarting = false
             detachMediaClientListener()
             failMediaReplies()
             pendingConnect?.fail("CAST_ENDED", "The Cast session ended before it was ready.")
-            val confirmed = error == 0
+            val confirmed = disconnectRequested && receiverStopAcknowledged && error == 0
+            receiverStopAcknowledged = false
             if (disconnectRequested) {
-                if (confirmed) pendingDisconnect?.succeed()
+                if (confirmed) pendingDisconnect?.succeed(true)
                 else pendingDisconnect?.fail("CAST_DISCONNECT", "Receiver shutdown was not confirmed (status $error).")
             }
-            emit(mapOf("event" to "sessionEnded", "shutdownConfirmed" to confirmed))
+            emit(mapOf("event" to "sessionEnded", "deviceId" to endedRoute, "shutdownConfirmed" to confirmed))
         }
         override fun onSessionStarting(p0: CastSession) {}
         override fun onSessionStartFailed(p0: CastSession, p1: Int) = sessionFailed(p1)
@@ -102,7 +130,7 @@ class CastController(private val context: Context) {
             if (connectedSession !== session) return
             detachMediaClientListener()
             failMediaReplies()
-            emit(mapOf("event" to "sessionEnded", "shutdownConfirmed" to false))
+            emit(mapOf("event" to "sessionSuspended", "deviceId" to activeRouteId))
         }
     }
 
@@ -188,7 +216,18 @@ class CastController(private val context: Context) {
         val tick = object : Runnable {
             override fun run() {
                 if (connectedSession == null) return
-                if (client.isPlaying) emitStatus(client)
+                // The SDK's terminal onStatusUpdated callback may be delayed or
+                // missed while Android is backgrounded. Poll FINISHED/ERROR
+                // until Dart observes it; CastCompletionGate deduplicates by
+                // load ID so an idle receiver cannot skip multiple tracks.
+                val status = client.mediaStatus
+                if (shouldPollCastStatus(
+                        client.isPlaying,
+                        status?.playerState,
+                        status?.idleReason
+                    )) {
+                    emitStatus(client)
+                }
                 emitVolumeIfChanged()
                 handler.postDelayed(this, 1000L)
             }
@@ -209,6 +248,7 @@ class CastController(private val context: Context) {
         emit(
             mapOf(
                 "event" to "status",
+                "deviceId" to activeRouteId,
                 "position" to client.approximateStreamPosition,
                 "duration" to client.streamDuration,
                 "playing" to client.isPlaying,
@@ -247,6 +287,8 @@ class CastController(private val context: Context) {
         val target = mediaRouter.routes.firstOrNull { it.id == deviceId && it.matchesSelector(routeSelector) }
         if (target == null) { result.error("CAST_DEVICE", "The Cast receiver is no longer available. Scan again.", null); return }
         disconnectRequested = false
+        abandoningSession = false
+        receiverStopAcknowledged = false
         val existing = manager.currentCastSession
         if (existing?.isConnected == true && mediaRouter.selectedRoute.id == deviceId) {
             connectedSession = existing
@@ -265,22 +307,72 @@ class CastController(private val context: Context) {
     fun disconnect(result: MethodChannel.Result) {
         if (pendingDisconnect != null) { result.error("CAST_BUSY", "Wait for receiver shutdown.", null); return }
         disconnectRequested = true
+        abandoningSession = false
+        receiverStopAcknowledged = false
         pendingConnect?.fail("CAST_CANCELLED", "The Cast connection was cancelled.")
         failMediaReplies()
         val manager = castContext?.sessionManager
         val session = connectedSession ?: manager?.currentCastSession
         if (session == null && !connectionMayBeStarting) {
             detachMediaClientListener()
-            result.success(null)
+            try { mediaRouter.selectRoute(mediaRouter.defaultRoute) } catch (_: Exception) {}
+            // A session can vanish between the Dart probe and this call.
+            // No receiver STOP was sent, even though detaching succeeded.
+            result.success(false)
             return
         }
         pendingDisconnect = CastPendingReply(result, handler, onFinished = { pendingDisconnect = null })
-        try {
-            manager?.endCurrentSession(true)
-            mediaRouter.selectRoute(mediaRouter.defaultRoute)
-        } catch (_: Exception) {
-            pendingDisconnect?.fail("CAST_DISCONNECT", "The receiver could not confirm shutdown.")
+        val client = session?.takeIf { it.isConnected }?.remoteMediaClient
+        if (client == null) {
+            // The receiver is already unreachable. End the local SDK session,
+            // but never report a successful remote STOP.
+            try {
+                manager?.endCurrentSession(false)
+                mediaRouter.selectRoute(mediaRouter.defaultRoute)
+            } catch (_: Exception) {
+                pendingDisconnect?.fail("CAST_DISCONNECT", "The receiver is unreachable.")
+            }
+            return
         }
+        try {
+            client.stop().setResultCallback { response ->
+                if (pendingDisconnect == null || abandoningSession || !disconnectRequested) return@setResultCallback
+                if (!response.status.isSuccess) {
+                    pendingDisconnect?.fail("CAST_DISCONNECT", "The receiver did not acknowledge Stop.")
+                    return@setResultCallback
+                }
+                receiverStopAcknowledged = true
+                try {
+                    manager?.endCurrentSession(true)
+                    mediaRouter.selectRoute(mediaRouter.defaultRoute)
+                } catch (_: Exception) {
+                    pendingDisconnect?.fail("CAST_DISCONNECT", "The receiver could not complete shutdown.")
+                }
+            }
+        } catch (_: Exception) {
+            pendingDisconnect?.fail("CAST_DISCONNECT", "The receiver did not acknowledge Stop.")
+        }
+    }
+
+    /** Leave an unreachable receiver without claiming its audio was stopped.
+     * Used only after session loss or a user's explicit Return to phone action.
+     */
+    fun abandon(result: MethodChannel.Result) {
+        disconnectRequested = true
+        abandoningSession = true
+        receiverStopAcknowledged = false
+        pendingConnect?.fail("CAST_CANCELLED", "The Cast connection was abandoned.")
+        pendingDisconnect?.fail("CAST_CANCELLED", "The Cast sender was detached.")
+        failMediaReplies()
+        abandonedSession = connectedSession ?: castContext?.sessionManager?.currentCastSession
+        connectedSession = null
+        activeRouteId = null
+        connectionMayBeStarting = false
+        pendingRouteId = null
+        detachMediaClientListener()
+        try { castContext?.sessionManager?.endCurrentSession(false) } catch (_: Exception) {}
+        try { mediaRouter.selectRoute(mediaRouter.defaultRoute) } catch (_: Exception) {}
+        result.success(null)
     }
 
     private fun client(): RemoteMediaClient? = connectedSession?.remoteMediaClient
@@ -291,6 +383,7 @@ class CastController(private val context: Context) {
         val status = client?.mediaStatus
         reportedIdentity.update(status?.mediaInfo)
         return mapOf(
+            "connected" to (connectedSession?.isConnected == true || castContext?.sessionManager?.currentCastSession?.isConnected == true),
             "name" to (connectedSession?.castDevice?.friendlyName ?: mediaRouter.selectedRoute.name.toString()),
             "trackId" to reportedIdentity.trackId,
             "loadId" to reportedIdentity.loadId,
@@ -353,7 +446,24 @@ class CastController(private val context: Context) {
     fun seek(positionMs: Long, result: MethodChannel.Result) = command(result) {
         it.seek(MediaSeekOptions.Builder().setPosition(positionMs.coerceAtLeast(0)).build())
     }
-    fun setVolume(volume: Double, result: MethodChannel.Result) = command(result) { it.setStreamVolume(volume.coerceIn(0.0, 1.0)) }
+    fun setVolume(volume: Double, result: MethodChannel.Result) {
+        // The UI and physical volume keys control *device* volume. CAF's
+        // RemoteMediaClient.setStreamVolume is a separate per-track gain and
+        // must not be used for the Cast receiver volume slider.
+        val session = (connectedSession ?: castContext?.sessionManager?.currentCastSession)
+            ?.takeIf { it.isConnected }
+        if (session == null) {
+            result.error("CAST_NOT_CONNECTED", "The receiver is no longer connected.", null)
+            return
+        }
+        try {
+            session.setVolume(volume.coerceIn(0.0, 1.0))
+            emitVolumeIfChanged()
+            result.success(null)
+        } catch (_: Exception) {
+            result.error("CAST_VOLUME", "Could not change receiver volume.", null)
+        }
+    }
 
     private fun emitVolumeIfChanged() {
         val v = currentVolume() ?: return

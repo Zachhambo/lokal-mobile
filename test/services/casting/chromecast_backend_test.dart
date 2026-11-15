@@ -72,6 +72,21 @@ void main() {
     },
   );
 
+  test('successful sender detach is not assumed to confirm STOP', () async {
+    final backend = ChromecastBackend(propagateErrors: true);
+    for (final (reply, confirmed) in <(Object?, bool)>[
+      (true, true),
+      (false, false),
+      (null, false),
+    ]) {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'disconnect');
+        return reply;
+      });
+      expect(await backend.disconnectConfirmed(), confirmed);
+    }
+  });
+
   test(
     'missing native sender is an error when strict and optional otherwise',
     () async {

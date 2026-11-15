@@ -107,7 +107,7 @@ import 'package:flick/services/player_service.dart';
 import 'package:flick/services/external_playback_owner.dart';
 import 'package:flick/services/player_volume_control.dart';
 
-import '../widgets/android_output_chooser.dart';
+import '../widgets/playback_output_picker.dart';
 
 const String _font = 'GoogleSansFlex';
 
@@ -1830,7 +1830,7 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
       outputIcon: outputIcon,
       isCasting: isCasting,
       onClose: _close,
-      onOutput: () => openAndroidOutputChooser(context),
+      onOutput: () => unawaited(PlaybackOutputPicker.show(context)),
       onCast: _openCasting,
       onMore: () => unawaited(_openMore(song)),
     );

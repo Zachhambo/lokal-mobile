@@ -75,6 +75,41 @@ class MusicMediaSessionTest {
         assertEquals(service.sessionToken, MediaNotificationCompat.MediaStyle.getMediaSession(foreground))
     }
 
+    @Test fun nativeChromecastYieldsMediaControlsToGoogleCastWithoutKillingForegroundRelay() {
+        playLocally()
+        service.onStartCommand(Intent().apply {
+            putExtra("isCasting", true)
+            putExtra("isNativeChromecast", true)
+            putExtra("castDeviceName", "Living room speaker")
+        }, 0, 2)
+        val foreground = requireNotNull(shadowOf(service).lastForegroundNotification)
+        assertEquals(Notification.CATEGORY_SERVICE, foreground.category)
+        assertNull(MediaNotificationCompat.MediaStyle.getMediaSession(foreground))
+        assertNotEquals(service.sessionToken, MediaRouter.getInstance(service).mediaSessionToken)
+
+        // A metadata tick must not restore Lokal's competing media card.
+        service.onStartCommand(Intent().apply {
+            putExtra("title", "Updated title")
+            putExtra("position", 17000L)
+        }, 0, 3)
+        val updated = requireNotNull(shadowOf(service).lastForegroundNotification)
+        assertEquals(Notification.CATEGORY_SERVICE, updated.category)
+        assertNull(MediaNotificationCompat.MediaStyle.getMediaSession(updated))
+    }
+
+    @Test fun localPlaybackAfterNativeCastRestoresLokalMediaSession() {
+        service.onStartCommand(Intent().apply {
+            putExtra("isCasting", true)
+            putExtra("isNativeChromecast", true)
+            putExtra("castDeviceName", "Kitchen")
+        }, 0, 1)
+        playLocally()
+        val foreground = requireNotNull(shadowOf(service).lastForegroundNotification)
+        assertEquals(Notification.CATEGORY_TRANSPORT, foreground.category)
+        assertEquals(service.sessionToken, MediaNotificationCompat.MediaStyle.getMediaSession(foreground))
+        assertEquals(service.sessionToken, MediaRouter.getInstance(service).mediaSessionToken)
+    }
+
     @Test fun returningFromPcControlRestoresTheSameLocalSessionAndRouteAssociation() {
         service.onStartCommand(Intent().apply {
             putExtra("title", "PC output")
