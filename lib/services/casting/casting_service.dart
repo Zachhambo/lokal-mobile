@@ -525,16 +525,16 @@ class CastingService {
       var stoppedReceiver = false;
       if (!leaveReceiver && await _nativeCastConnected()) {
         try {
-          final disconnect = _chromecast.disconnect();
-          // Cancel the native pending operation via abandon() when switching
-          // to a different receiver; otherwise a dead device can hold the
-          // output selector hostage for the SDK's entire shutdown timeout.
+          final disconnect = _chromecast.disconnectConfirmed();
+          // The channel may report success after an already-lost session:
+          // only the SDK's explicit STOP confirmation authorizes autoplay.
           if (allowUnconfirmedDetach) {
-            await disconnect.timeout(const Duration(seconds: 8));
+            stoppedReceiver = await disconnect.timeout(
+              const Duration(seconds: 8),
+            );
           } else {
-            await disconnect;
+            stoppedReceiver = await disconnect;
           }
-          stoppedReceiver = true;
         } catch (_) {
           // A normal Stop request must still refuse automatic dual playback.
           // A deliberate receiver switch is allowed to detach the old sender,
