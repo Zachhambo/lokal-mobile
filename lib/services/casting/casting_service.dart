@@ -839,11 +839,12 @@ class CastingService {
         final reportedDeviceId = e['deviceId'] as String?;
         // SDK callbacks and queued EventChannel messages may arrive after a
         // mid-play switch. Never let receiver A's status/end overwrite B.
-        if (reportedDeviceId != null &&
-            _activeDevice?.backend == CastBackend.chromecast &&
-            reportedDeviceId != _activeDevice!.id) {
-          return;
-        }
+        if (!castEventMatchesReceiver(
+          reportedDeviceId: reportedDeviceId,
+          activeDeviceId: _activeDevice?.backend == CastBackend.chromecast
+              ? _activeDevice?.id
+              : null,
+        )) return;
         switch (event) {
           case 'sessionStarted':
           case 'sessionResumed':
