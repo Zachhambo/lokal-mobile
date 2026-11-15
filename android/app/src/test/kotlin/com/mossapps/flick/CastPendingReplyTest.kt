@@ -64,6 +64,18 @@ class CastPendingReplyTest {
         assertNull(identity.loadId)
     }
 
+    @Test fun backgroundCastPollContinuesThroughFinishedStatus() {
+        val playing = com.google.android.gms.cast.MediaStatus.PLAYER_STATE_PLAYING
+        val idle = com.google.android.gms.cast.MediaStatus.PLAYER_STATE_IDLE
+        val finished = com.google.android.gms.cast.MediaStatus.IDLE_REASON_FINISHED
+        val error = com.google.android.gms.cast.MediaStatus.IDLE_REASON_ERROR
+        assertTrue(shouldPollCastStatus(true, playing, null))
+        assertTrue(shouldPollCastStatus(false, idle, finished))
+        assertTrue(shouldPollCastStatus(false, idle, error))
+        assertFalse(shouldPollCastStatus(false, idle, null))
+        assertFalse(shouldPollCastStatus(false, com.google.android.gms.cast.MediaStatus.PLAYER_STATE_PAUSED, null))
+    }
+
     @Test fun contentGrantIsNeverSentAsAReceiverUrl() {
         try {
             castMediaLoad("content://library/track", null, null, "audio/flac", true, 0)
