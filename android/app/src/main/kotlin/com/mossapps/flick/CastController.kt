@@ -52,12 +52,16 @@ class CastController(private val context: Context) {
     private var pendingDisconnect: CastPendingReply? = null
     private var pendingRouteId: String? = null
     private var disconnectRequested = false
+    private var abandoningSession = false
     private var connectionMayBeStarting = false
     private val mediaReplies = mutableSetOf<CastPendingReply>()
 
     private fun sessionReady(session: CastSession, event: String) {
+        if (abandonedSession === session) return
         if (disconnectRequested) {
-            castContext?.sessionManager?.endCurrentSession(true)
+            // Abandon means leave sender-only: never STOP the remote on a
+            // late resume/start callback after the phone already returned.
+            if (!abandoningSession) castContext?.sessionManager?.endCurrentSession(true)
             return
         }
         if (pendingRouteId != null && mediaRouter.selectedRoute.id != pendingRouteId) return
@@ -249,6 +253,7 @@ class CastController(private val context: Context) {
         val target = mediaRouter.routes.firstOrNull { it.id == deviceId && it.matchesSelector(routeSelector) }
         if (target == null) { result.error("CAST_DEVICE", "The Cast receiver is no longer available. Scan again.", null); return }
         disconnectRequested = false
+        abandoningSession = false
         val existing = manager.currentCastSession
         if (existing?.isConnected == true && mediaRouter.selectedRoute.id == deviceId) {
             connectedSession = existing
@@ -267,6 +272,7 @@ class CastController(private val context: Context) {
     fun disconnect(result: MethodChannel.Result) {
         if (pendingDisconnect != null) { result.error("CAST_BUSY", "Wait for receiver shutdown.", null); return }
         disconnectRequested = true
+        abandoningSession = false
         pendingConnect?.fail("CAST_CANCELLED", "The Cast connection was cancelled.")
         failMediaReplies()
         val manager = castContext?.sessionManager
@@ -291,6 +297,7 @@ class CastController(private val context: Context) {
      */
     fun abandon(result: MethodChannel.Result) {
         disconnectRequested = true
+        abandoningSession = true
         pendingConnect?.fail("CAST_CANCELLED", "The Cast connection was abandoned.")
         pendingDisconnect?.fail("CAST_CANCELLED", "The Cast sender was detached.")
         failMediaReplies()
