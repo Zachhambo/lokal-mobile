@@ -52,6 +52,7 @@ class _ArtistApple extends Fake implements AppleMusicMetadataService {
   Future<List<AppleMusicAlbumMatch>> getArtistReleases(
     String artist, {
     String? storefront,
+    String? artistId,
     bool refresh = false,
   }) async {
     verifiedCalls++;
