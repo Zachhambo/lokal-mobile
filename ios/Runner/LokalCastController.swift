@@ -28,6 +28,9 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
   private var ownedDeviceID: String?
   private weak var ownedSession: GCKCastSession?
   private var receiverMayBePlaying = false
+  // Sender disconnection is not proof of receiver STOP. Only a validated
+  // media STOP (or an explicitly empty session) may authorize local autoplay.
+  private var receiverStopAcknowledged = false
   private var requests: [UUID: LokalCastRequest] = [:]
 
   #if DEBUG
@@ -157,6 +160,7 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
     guard connectionReply == nil, disconnectReply == nil else {
       reject(reply, "CAST_BUSY", "Wait for the current Cast connection change."); return
     }
+    receiverStopAcknowledged = false
     let context = prepare()
     let manager = context.sessionManager
     if manager.hasConnectedCastSession(), let session = manager.currentCastSession {
@@ -197,6 +201,7 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
     ownedDeviceID = nil
     ownedSession = nil
     receiverMayBePlaying = false
+    receiverStopAcknowledged = false
     if let manager = context?.sessionManager, manager.currentSession != nil {
       _ = manager.endSessionAndStopCasting(false)
     }
@@ -207,6 +212,7 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
     guard disconnectReply == nil else {
       reject(reply, "CAST_BUSY", "A Cast disconnection is already running."); return
     }
+    receiverStopAcknowledged = false
     discoveryDeadline?.cancel()
     discoveryDeadline = nil
     let discovery = discoveryReply
@@ -220,7 +226,8 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
       }
       detach()
       ownedDeviceID = nil
-      reply(.success(nil)); return
+      // No current session means STOP was not delivered by this call.
+      reply(.success(false)); return
     }
     disconnectReply = reply
     let deadline = DispatchWorkItem { [weak self] in
@@ -242,11 +249,14 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
         switch result {
         case .success:
           self.receiverMayBePlaying = false
+          self.receiverStopAcknowledged = true
           self.endConfirmedSession(manager)
         case .failure(let error): self.finishDisconnect(.failure(error))
         }
       }
     } else {
+      // This sender has never started receiver media in this session.
+      receiverStopAcknowledged = true
       endConfirmedSession(manager)
     }
   }
@@ -414,6 +424,8 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
     // A late callback for the same physical receiver must not tear down a
     // newer Cast session that has replaced it.
     guard ownedSession === session, session.device.uniqueID == ownedDeviceID else { return }
+    let confirmed = disconnectReply != nil && receiverStopAcknowledged && error == nil
+    receiverStopAcknowledged = false
     ownedSession = nil
     detach()
     if error == nil { receiverMayBePlaying = false }
@@ -422,10 +434,10 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
     if receiverMayBePlaying {
       finishDisconnect(.failure(Failure(code: "CAST_UNCERTAIN", message: "The connection ended before receiver shutdown was confirmed.")))
     } else {
-      finishDisconnect(.success(nil))
+      finishDisconnect(.success(confirmed))
     }
     onEvent?(["event": "sessionEnded", "deviceId": session.device.uniqueID,
-              "shutdownConfirmed": !receiverMayBePlaying])
+              "shutdownConfirmed": confirmed])
   }
 
   func sessionManager(_ sessionManager: GCKSessionManager, didSuspend session: GCKCastSession, with reason: GCKConnectionSuspendReason) {
