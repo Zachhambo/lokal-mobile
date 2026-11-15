@@ -76,6 +76,7 @@ class LokalMusicDetailPage extends ConsumerStatefulWidget {
     required this.artist,
     required this.localSongs,
     this.initialOnline = false,
+    this.appleArtistId,
     this.catalogue,
     this.release,
     this.artworkHeroTag,
@@ -407,6 +408,7 @@ class _LokalMusicDetailPageState extends ConsumerState<LokalMusicDetailPage> {
       final page = await (widget.isArtist
           ? _catalogue.artist(
               widget.artist,
+              appleArtistId: widget.appleArtistId,
               refresh: refresh,
             )
           : _catalogue.album(
