@@ -53,6 +53,8 @@ class CastController(private val context: Context) {
     private var pendingRouteId: String? = null
     private var disconnectRequested = false
     private var abandoningSession = false
+    // Ending a sender session is not a receiver STOP acknowledgement.
+    private var receiverStopAcknowledged = false
     private var connectionMayBeStarting = false
     private val mediaReplies = mutableSetOf<CastPendingReply>()
 
@@ -92,7 +94,8 @@ class CastController(private val context: Context) {
             detachMediaClientListener()
             failMediaReplies()
             pendingConnect?.fail("CAST_ENDED", "The Cast session ended before it was ready.")
-            val confirmed = error == 0
+            val confirmed = disconnectRequested && receiverStopAcknowledged && error == 0
+            receiverStopAcknowledged = false
             if (disconnectRequested) {
                 if (confirmed) pendingDisconnect?.succeed()
                 else pendingDisconnect?.fail("CAST_DISCONNECT", "Receiver shutdown was not confirmed (status $error).")
@@ -254,6 +257,7 @@ class CastController(private val context: Context) {
         if (target == null) { result.error("CAST_DEVICE", "The Cast receiver is no longer available. Scan again.", null); return }
         disconnectRequested = false
         abandoningSession = false
+        receiverStopAcknowledged = false
         val existing = manager.currentCastSession
         if (existing?.isConnected == true && mediaRouter.selectedRoute.id == deviceId) {
             connectedSession = existing
@@ -273,6 +277,7 @@ class CastController(private val context: Context) {
         if (pendingDisconnect != null) { result.error("CAST_BUSY", "Wait for receiver shutdown.", null); return }
         disconnectRequested = true
         abandoningSession = false
+        receiverStopAcknowledged = false
         pendingConnect?.fail("CAST_CANCELLED", "The Cast connection was cancelled.")
         failMediaReplies()
         val manager = castContext?.sessionManager
@@ -284,11 +289,35 @@ class CastController(private val context: Context) {
             return
         }
         pendingDisconnect = CastPendingReply(result, handler, onFinished = { pendingDisconnect = null })
+        val client = session?.takeIf { it.isConnected }?.remoteMediaClient
+        if (client == null) {
+            // The receiver is already unreachable. End the local SDK session,
+            // but never report a successful remote STOP.
+            try {
+                manager?.endCurrentSession(false)
+                mediaRouter.selectRoute(mediaRouter.defaultRoute)
+            } catch (_: Exception) {
+                pendingDisconnect?.fail("CAST_DISCONNECT", "The receiver is unreachable.")
+            }
+            return
+        }
         try {
-            manager?.endCurrentSession(true)
-            mediaRouter.selectRoute(mediaRouter.defaultRoute)
+            client.stop().setResultCallback { response ->
+                if (pendingDisconnect == null || abandoningSession || !disconnectRequested) return@setResultCallback
+                if (!response.status.isSuccess) {
+                    pendingDisconnect?.fail("CAST_DISCONNECT", "The receiver did not acknowledge Stop.")
+                    return@setResultCallback
+                }
+                receiverStopAcknowledged = true
+                try {
+                    manager?.endCurrentSession(true)
+                    mediaRouter.selectRoute(mediaRouter.defaultRoute)
+                } catch (_: Exception) {
+                    pendingDisconnect?.fail("CAST_DISCONNECT", "The receiver could not complete shutdown.")
+                }
+            }
         } catch (_: Exception) {
-            pendingDisconnect?.fail("CAST_DISCONNECT", "The receiver could not confirm shutdown.")
+            pendingDisconnect?.fail("CAST_DISCONNECT", "The receiver did not acknowledge Stop.")
         }
     }
 
@@ -298,6 +327,7 @@ class CastController(private val context: Context) {
     fun abandon(result: MethodChannel.Result) {
         disconnectRequested = true
         abandoningSession = true
+        receiverStopAcknowledged = false
         pendingConnect?.fail("CAST_CANCELLED", "The Cast connection was abandoned.")
         pendingDisconnect?.fail("CAST_CANCELLED", "The Cast sender was detached.")
         failMediaReplies()
