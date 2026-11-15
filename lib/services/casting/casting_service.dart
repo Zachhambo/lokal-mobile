@@ -836,6 +836,14 @@ class CastingService {
     _ccEventsSub = _chromecast.events.listen(
       (e) {
         final event = e['event'] as String?;
+        final reportedDeviceId = e['deviceId'] as String?;
+        // SDK callbacks and queued EventChannel messages may arrive after a
+        // mid-play switch. Never let receiver A's status/end overwrite B.
+        if (reportedDeviceId != null &&
+            _activeDevice?.backend == CastBackend.chromecast &&
+            reportedDeviceId != _activeDevice!.id) {
+          return;
+        }
         switch (event) {
           case 'sessionStarted':
           case 'sessionResumed':
