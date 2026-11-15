@@ -83,7 +83,8 @@ class CastController(private val context: Context) {
     private fun sessionFailed(code: Int) {
         connectionMayBeStarting = false
         pendingConnect?.fail("CAST_CONNECT", "The receiver could not start a Cast session (status $code).")
-        if (disconnectRequested) pendingDisconnect?.succeed()
+        // Failed to establish a session never proves that the receiver stopped.
+        if (disconnectRequested) pendingDisconnect?.succeed(false)
     }
 
     private val sessionListener = object : SessionManagerListener<CastSession> {
@@ -102,7 +103,7 @@ class CastController(private val context: Context) {
             val confirmed = disconnectRequested && receiverStopAcknowledged && error == 0
             receiverStopAcknowledged = false
             if (disconnectRequested) {
-                if (confirmed) pendingDisconnect?.succeed()
+                if (confirmed) pendingDisconnect?.succeed(true)
                 else pendingDisconnect?.fail("CAST_DISCONNECT", "Receiver shutdown was not confirmed (status $error).")
             }
             emit(mapOf("event" to "sessionEnded", "deviceId" to endedRoute, "shutdownConfirmed" to confirmed))
@@ -291,7 +292,9 @@ class CastController(private val context: Context) {
         if (session == null && !connectionMayBeStarting) {
             detachMediaClientListener()
             try { mediaRouter.selectRoute(mediaRouter.defaultRoute) } catch (_: Exception) {}
-            result.success(null)
+            // A session can vanish between the Dart probe and this call.
+            // No receiver STOP was sent, even though detaching succeeded.
+            result.success(false)
             return
         }
         pendingDisconnect = CastPendingReply(result, handler, onFinished = { pendingDisconnect = null })
