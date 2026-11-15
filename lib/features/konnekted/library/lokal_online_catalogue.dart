@@ -142,8 +142,10 @@ class LokalOnlineCatalogue {
        _albumArtwork = albumArtwork,
        _youtubeReleases = youtubeReleases;
   static final instance = LokalOnlineCatalogue();
-  void invalidateArtist(String name) =>
-      _cache.remove('artist:${recommendationKey(name)}');
+  void invalidateArtist(String name) {
+    final prefix = 'artist:${recommendationKey(name)}:';
+    _cache.removeWhere((key, _) => key.startsWith(prefix));
+  }
 
   final AppleMusicMetadataService _apple;
   final Future<List<OnlineSource>> Function(http.Client) _sources;
