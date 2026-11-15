@@ -233,7 +233,12 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
             if (it.hasExtra("isShuffle")) isShuffleMode = it.getBooleanExtra("isShuffle", false)
             if (it.hasExtra("isFavorite")) isFavorite = it.getBooleanExtra("isFavorite", false)
             if (it.hasExtra("color")) currentColor = it.getIntExtra("color", 0)
-            if (it.hasExtra("isCasting")) isCasting = it.getBooleanExtra("isCasting", false)
+            if (it.hasExtra("isCasting")) {
+                isCasting = it.getBooleanExtra("isCasting", false)
+                // Every new local/linked-PC selection must retire the prior
+                // native Cast session even if that caller predates this flag.
+                if (!isCasting) isNativeChromecast = false
+            }
             if (it.hasExtra("isNativeChromecast"))
                 isNativeChromecast = it.getBooleanExtra("isNativeChromecast", false)
             if (it.hasExtra("isRemotePlayback")) isRemotePlayback = it.getBooleanExtra("isRemotePlayback", false)
