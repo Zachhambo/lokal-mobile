@@ -419,7 +419,24 @@ class CastController(private val context: Context) {
     fun seek(positionMs: Long, result: MethodChannel.Result) = command(result) {
         it.seek(MediaSeekOptions.Builder().setPosition(positionMs.coerceAtLeast(0)).build())
     }
-    fun setVolume(volume: Double, result: MethodChannel.Result) = command(result) { it.setStreamVolume(volume.coerceIn(0.0, 1.0)) }
+    fun setVolume(volume: Double, result: MethodChannel.Result) {
+        // The UI and physical volume keys control *device* volume. CAF's
+        // RemoteMediaClient.setStreamVolume is a separate per-track gain and
+        // must not be used for the Cast receiver volume slider.
+        val session = (connectedSession ?: castContext?.sessionManager?.currentCastSession)
+            ?.takeIf { it.isConnected }
+        if (session == null) {
+            result.error("CAST_NOT_CONNECTED", "The receiver is no longer connected.", null)
+            return
+        }
+        try {
+            session.setVolume(volume.coerceIn(0.0, 1.0))
+            emitVolumeIfChanged()
+            result.success(null)
+        } catch (_: Exception) {
+            result.error("CAST_VOLUME", "Could not change receiver volume.", null)
+        }
+    }
 
     private fun emitVolumeIfChanged() {
         val v = currentVolume() ?: return
