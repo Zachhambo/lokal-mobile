@@ -73,8 +73,20 @@ class _PlaybackOutputPickerState extends ConsumerState<PlaybackOutputPicker> {
     if (_switching) return;
     setState(() { _switching = true; _error = null; });
     try {
+      final castWarning = ref.read(castServiceProvider).errorNotifier;
+      // Never display a warning left over from a previous output change.
+      castWarning.value = null;
       await action();
-      if (mounted) Navigator.of(context).pop();
+      if (mounted) {
+        final warning = castWarning.value;
+        if (warning != null && warning.isNotEmpty) {
+          // ScaffoldMessenger survives this modal's dismissal.
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(warning)),
+          );
+        }
+        Navigator.of(context).pop();
+      }
     } catch (error) {
       if (mounted) setState(() => _error = _message(error));
     } finally {
