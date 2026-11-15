@@ -4817,6 +4817,8 @@ class PlayerService {
       isFavorite: isFav,
       color: notificationColor,
       isCasting: _castingService.isActive,
+      isNativeChromecast:
+          _castingService.activeDevice?.backend == CastBackend.chromecast,
       castDeviceName: _castingService.activeDevice?.name,
       castVolumePercent: _castingService.remoteVolumeNotifier.value == null
           ? null
