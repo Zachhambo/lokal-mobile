@@ -4,6 +4,37 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flick/services/casting/cast_session_recovery.dart';
 
 void main() {
+  test('old receiver events are rejected after mid-song device switch', () {
+    expect(
+      castEventMatchesReceiver(
+        reportedDeviceId: 'receiver-a',
+        activeDeviceId: 'receiver-b',
+      ),
+      isFalse,
+    );
+    expect(
+      castEventMatchesReceiver(
+        reportedDeviceId: 'receiver-b',
+        activeDeviceId: 'receiver-b',
+      ),
+      isTrue,
+    );
+    expect(
+      castEventMatchesReceiver(
+        reportedDeviceId: 'receiver-a',
+        activeDeviceId: null,
+      ),
+      isFalse,
+    );
+    expect(
+      castEventMatchesReceiver(
+        reportedDeviceId: null,
+        activeDeviceId: 'receiver-b',
+      ),
+      isTrue,
+    );
+  });
+
   test('lost receiver returns to paused local ownership without auto-play', () async {
     var castActive = true;
     var localPlaying = false;
