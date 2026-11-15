@@ -460,7 +460,7 @@ class CastingService {
             unawaited(PlayerService().refreshNotificationState());
           }
         },
-      ).catchError((_) {}),
+      ).catchError((_) => false),
     );
   }
 
