@@ -647,11 +647,659 @@ class AppleMusicMetadataService {
   Future<List<AppleMusicAlbumMatch>> getArtistReleases(
     String name, {
     String? storefront,
+    String? artistId,
     bool refresh = false,
   }) async {
-    final artist = await resolveArtist(name, storefront: storefront, refresh: refresh);
+    // A catalogue search selection must not be resolved again by name.
+    final explicitId = artistId?.trim() ?? '';
+    if (explicitId.isNotEmpty && !RegExp(r'^\d{1,20}
+    final sf = _primaryStorefront(storefront);
+    return await _cache.fetch<List<AppleMusicAlbumMatch>>(
+          key: _key('artist-releases-v2', '${artist.artistId}|$sf'),
+          refresh: refresh,
+          loader: () async {
+            final regions = <String>{sf, 'us', 'ng', 'gb'};
+            var successful = 0;
+            final pages = await Future.wait([
+              for (final region in regions)
+                () async {
+                  try {
+                    final rows = await _itunesLookup(
+                      id: artist.artistId,
+                      entity: 'album',
+                      limit: _albumLookupLimit,
+                      storefront: region,
+                    );
+                    successful++;
+                    return (region: region, rows: rows);
+                  } catch (_) {
+                    return (region: region, rows: <Map<String, dynamic>>[]);
+                  }
+                }(),
+            ]);
+            // Do not cache a network outage as a seven-day empty discography.
+            if (successful == 0) {
+              throw const AppleMusicTransientException('artist release lookup unavailable');
+            }
+            final seen = <String>{};
+            final releases = <AppleMusicAlbumMatch>[];
+            for (final page in pages) {
+              for (final row in page.rows) {
+                if (row['wrapperType'] != 'collection') continue;
+                final release = _albumFromJson(row, page.region);
+                if (release.collectionId.isEmpty ||
+                    !seen.add(release.collectionId)) continue;
+                releases.add(release);
+              }
+            }
+            return releases;
+          },
+          encode: (matches) => {
+            'albums': [for (final match in matches) match.toJson()],
+          },
+          decode: (json) =>
+              (json['albums'] as List?)
+                  ?.whereType<Map<String, dynamic>>()
+                  .map(AppleMusicAlbumMatch.fromJson)
+                  .toList() ??
+              const <AppleMusicAlbumMatch>[],
+          ttl: _infoTtl,
+          negativeTtl: _negativeTtl,
+          transientTtl: _transientTtl,
+        ) ??
+        const <AppleMusicAlbumMatch>[];
+  }
+
+  /// Free-text album search returning every plausible release, used by the
+  /// identification flow where a single best match is not enough.
+  Future<List<AppleMusicAlbumMatch>> searchAlbums(
+    String term, {
+    int limit = 25,
+    String? storefront,
+    bool refresh = false,
+  }) {
+    final query = term.trim();
+    if (query.isEmpty) return Future.value(const <AppleMusicAlbumMatch>[]);
+    final sf = _primaryStorefront(storefront);
+    return _cache
+        .fetch<List<AppleMusicAlbumMatch>>(
+          key: _key('album-search', '${_normalize(query)}|$limit|$sf'),
+          refresh: refresh,
+          loader: () async {
+            final results = await _itunesSearch(
+              term: query,
+              entity: 'album',
+              limit: limit,
+              storefront: sf,
+            );
+            final seen = <String>{};
+            final matches = <AppleMusicAlbumMatch>[];
+            for (final result in results) {
+              if (result['wrapperType'] != 'collection') continue;
+              final match = _albumFromJson(result, sf);
+              if (match.collectionId.isEmpty || !seen.add(match.collectionId)) {
+                continue;
+              }
+              matches.add(match);
+            }
+            return matches;
+          },
+          encode: (matches) => {
+            'albums': [for (final match in matches) match.toJson()],
+          },
+          decode: (json) =>
+              (json['albums'] as List?)
+                  ?.whereType<Map<String, dynamic>>()
+                  .map(AppleMusicAlbumMatch.fromJson)
+                  .toList() ??
+              const <AppleMusicAlbumMatch>[],
+          ttl: _infoTtl,
+          negativeTtl: _negativeTtl,
+          transientTtl: _transientTtl,
+        )
+        .then((matches) => matches ?? const <AppleMusicAlbumMatch>[]);
+  }
+
+  /// Downloads album artwork at the requested size. Null when unavailable.
+  Future<Uint8List?> fetchArtworkBytes(String url, {int size = 1500}) async {
+    final target = artworkUrl(url, size);
+    if (target == null) return null;
+    try {
+      final response = await _request(Uri.parse(target));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return null;
+      }
+      return response.bodyBytes;
+    } on AppleMusicTransientException {
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Rewrites an mzstatic image URL to the requested square size.
+  static String? artworkUrl(String? url, int size) {
+    final trimmed = url?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    return trimmed.replaceAll(_imageSizeRe, '${size}x${size}bb.');
+  }
+
+  static String artistPageUrl(String artistId, String storefront) =>
+      '$_musicBase/$storefront/artist/-/$artistId';
+
+  static String albumPageUrl(String collectionId, String storefront) =>
+      '$_musicBase/$storefront/album/-/$collectionId';
+
+  Future<List<Map<String, dynamic>>> _itunesSearch({
+    required String term,
+    required String entity,
+    required int limit,
+    required String storefront,
+  }) async {
+    final json = await _getJson(
+      Uri.parse(_itunesSearchBase).replace(
+        queryParameters: {
+          'term': term,
+          'media': 'music',
+          'entity': entity,
+          'limit': '$limit',
+          'country': storefront,
+        },
+      ),
+    );
+    return (json['results'] as List?)
+            ?.whereType<Map<String, dynamic>>()
+            .toList() ??
+        const <Map<String, dynamic>>[];
+  }
+
+  Future<List<Map<String, dynamic>>> _itunesLookup({
+    required String id,
+    required String storefront,
+    String? entity,
+    String? sort,
+    int? limit,
+  }) async {
+    final json = await _getJson(
+      Uri.parse(_itunesLookupBase).replace(
+        queryParameters: {
+          'id': id,
+          'entity': ?entity,
+          'sort': ?sort,
+          if (limit != null) 'limit': '$limit',
+          'country': storefront,
+        },
+      ),
+    );
+    return (json['results'] as List?)
+            ?.whereType<Map<String, dynamic>>()
+            .toList() ??
+        const <Map<String, dynamic>>[];
+  }
+
+  AppleMusicArtist? _bestArtistMatch(
+    String query,
+    List<Map<String, dynamic>> results,
+    String storefront,
+  ) {
+    final requested = _normalize(query);
+    Map<String, dynamic>? fallback;
+    for (final result in results) {
+      if (result['wrapperType'] != 'artist') continue;
+      fallback ??= result;
+      final candidate = _clean(result['artistName']);
+      if (candidate != null && _normalize(candidate) == requested) {
+        return _artistFromJson(result, storefront);
+      }
+    }
+    return fallback == null ? null : _artistFromJson(fallback, storefront);
+  }
+
+  AppleMusicArtist _artistFromJson(
+    Map<String, dynamic> json,
+    String storefront,
+  ) {
+    final id = _cleanId(json['artistId']);
+    return AppleMusicArtist(
+      artistId: id,
+      name: _clean(json['artistName']) ?? '',
+      genre: _clean(json['primaryGenreName']),
+      url:
+          _stripTracking(_clean(json['artistLinkUrl'])) ??
+          artistPageUrl(id, storefront),
+    );
+  }
+
+  AppleMusicAlbumMatch? _bestAlbumMatch(
+    String requested,
+    List<Map<String, dynamic>> results,
+    String storefront,
+  ) {
+    final collections = [
+      for (final result in results)
+        if (result['wrapperType'] == 'collection') result,
+    ];
+    final requestedNorm = _normalize(requested);
+    final requestedBase = _normalize(_baseName(requested));
+
+    for (final result in collections) {
+      final name = _clean(result['collectionName']);
+      if (name != null && _normalize(name) == requestedNorm) {
+        return _albumFromJson(result, storefront);
+      }
+    }
+    for (final result in collections) {
+      final name = _clean(result['collectionName']);
+      if (name != null && _normalize(_baseName(name)) == requestedBase) {
+        return _albumFromJson(result, storefront);
+      }
+    }
+    if (requestedBase.length >= 4) {
+      for (final result in collections) {
+        final name = _clean(result['collectionName']);
+        if (name == null) continue;
+        final candidateBase = _normalize(_baseName(name));
+        if (candidateBase.length < 4) continue;
+        if (candidateBase.contains(requestedBase) ||
+            requestedBase.contains(candidateBase)) {
+          return _albumFromJson(result, storefront);
+        }
+      }
+    }
+    return null;
+  }
+
+  AppleMusicAlbumMatch _albumFromJson(
+    Map<String, dynamic> json,
+    String storefront,
+  ) {
+    final id = _cleanId(json['collectionId']);
+    return AppleMusicAlbumMatch(
+      collectionId: id,
+      name: _clean(json['collectionName']) ?? '',
+      artistName: _clean(json['artistName']) ?? '',
+      url:
+          _stripTracking(_clean(json['collectionViewUrl'])) ??
+          albumPageUrl(id, storefront),
+      artworkUrl: artworkUrl(_clean(json['artworkUrl100']), 1500),
+      releaseDate: _shortDate(_clean(json['releaseDate'])),
+      genre: _clean(json['primaryGenreName']),
+      trackCount: (json['trackCount'] as num?)?.toInt(),
+    );
+  }
+
+  Future<AppleMusicArtistInfo?> _fetchArtistInfo(
+    String artistId,
+    String storefront,
+  ) async {
+    final url = artistPageUrl(artistId, storefront);
+    final html = await _getHtml(Uri.parse(url));
+    if (html == null) return null;
+
+    final jsonLd = _findJsonLd(html);
+    var biography = _clean(jsonLd?['description']);
+    if (biography != null) {
+      biography = _normalizeParagraphs(_decodeEntities(_stripTags(biography)));
+      if (biography.isEmpty) biography = null;
+    }
+    biography ??= _cleanMeta(html, 'og:description');
+    if (biography != null && _isPlaceholderBiography(biography)) {
+      biography = null;
+    }
+
+    var image = _jsonLdImage(jsonLd?['image']);
+    image ??= _cleanMeta(html, 'og:image');
+    image = artworkUrl(image, 1500);
+    if (image != null && image.contains('meta/apple-music.png')) {
+      image = null;
+    }
+
+    return AppleMusicArtistInfo(
+      artistId: artistId,
+      name: _clean(jsonLd?['name']) ?? _cleanMeta(html, 'og:title') ?? '',
+      storefront: storefront,
+      url: url,
+      biography: biography,
+      imageUrl: image,
+      similarArtists: _parseSimilarArtists(html),
+    );
+  }
+
+  bool _hasArtistContent(AppleMusicArtistInfo info) =>
+      info.biography != null ||
+      info.imageUrl != null ||
+      info.similarArtists.isNotEmpty;
+
+  Map<String, dynamic>? _findJsonLd(String html) {
+    for (final match in _jsonLdRe.allMatches(html)) {
+      final raw = match.group(1);
+      if (raw == null) continue;
+      final decoded = _decodeJson(raw);
+      final map = _firstJsonLdMap(decoded);
+      if (map != null) return map;
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? _firstJsonLdMap(dynamic decoded) {
+    if (decoded is Map<String, dynamic>) {
+      if (decoded.containsKey('description') ||
+          decoded.containsKey('image') ||
+          decoded.containsKey('name')) {
+        return decoded;
+      }
+      return null;
+    }
+    if (decoded is List) {
+      Map<String, dynamic>? fallback;
+      for (final item in decoded) {
+        if (item is! Map<String, dynamic>) continue;
+        fallback ??= item;
+        if (item.containsKey('description') || item.containsKey('image')) {
+          return item;
+        }
+      }
+      return fallback;
+    }
+    return null;
+  }
+
+  String? _jsonLdImage(dynamic value) {
+    if (value is String) {
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    }
+    if (value is Map) {
+      return _jsonLdImage(value['url']);
+    }
+    if (value is List) {
+      for (final item in value) {
+        final found = _jsonLdImage(item);
+        if (found != null) return found;
+      }
+    }
+    return null;
+  }
+
+  List<AppleMusicSimilarArtist> _parseSimilarArtists(String html) {
+    final markerIndex = _findSimilarMarker(html);
+    if (markerIndex < 0) return const <AppleMusicSimilarArtist>[];
+    var window = html.substring(markerIndex);
+    if (window.length > _similarWindowChars) {
+      window = window.substring(0, _similarWindowChars);
+    }
+    final cut = window.indexOf('data-testid="section-container"', 100);
+    final scope = cut > 0 ? window.substring(0, cut) : window;
+
+    final names = <String>[];
+    final seen = <String>{};
+    for (final match in _lockupTitleRe.allMatches(scope)) {
+      final name = _decodeEntities(match.group(1) ?? '').trim();
+      if (name.isEmpty) continue;
+      if (seen.add(name.toLowerCase())) names.add(name);
+    }
+    return [for (final name in names) AppleMusicSimilarArtist(name: name)];
+  }
+
+  static const List<String> _similarMarkers = <String>[
+    'aria-label="Similar Artists"',
+    'aria-label="Ähnliche Künstler"',
+    'aria-label="Artistes similaires"',
+    'aria-label="Artistas similares"',
+    'aria-label="Artistas semelhantes"',
+    'aria-label="Artisti simili"',
+    'aria-label="似ているアーティスト"',
+  ];
+
+  int _findSimilarMarker(String html) {
+    var best = -1;
+    for (final marker in _similarMarkers) {
+      final index = html.indexOf(marker);
+      if (index >= 0 && (best < 0 || index < best)) best = index;
+    }
+    return best;
+  }
+
+  String? _parseAlbumNotes(String html) {
+    final match = _serializedDataRe.firstMatch(html);
+    if (match == null) return null;
+    final decoded = _decodeJson(match.group(1) ?? '');
+    if (decoded is! Map<String, dynamic>) return null;
+    final data = decoded['data'];
+    if (data is! List) return null;
+    for (final page in data) {
+      if (page is! Map<String, dynamic>) continue;
+      final pageData = page['data'];
+      if (pageData is! Map<String, dynamic>) continue;
+      final sections = pageData['sections'];
+      if (sections is! List) continue;
+      for (final section in sections) {
+        if (section is! Map<String, dynamic>) continue;
+        final items = section['items'];
+        if (items is! List) continue;
+        for (final item in items) {
+          if (item is! Map<String, dynamic>) continue;
+          final descriptor = item['modalPresentationDescriptor'];
+          if (descriptor is! Map<String, dynamic>) continue;
+          final text = _clean(descriptor['paragraphText']);
+          if (text == null) continue;
+          final normalized = _normalizeParagraphs(
+            _decodeEntities(_stripTags(text)),
+          );
+          if (normalized.isNotEmpty) return normalized;
+        }
+      }
+    }
+    return null;
+  }
+
+  dynamic _decodeJson(String raw) {
+    for (final candidate in [raw, _decodeEntities(raw)]) {
+      try {
+        return jsonDecode(candidate);
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  Future<String?> _getHtml(Uri uri) async {
+    final response = await _request(uri);
+    if (response.statusCode == 404) return null;
+    if (response.statusCode != 200) {
+      throw AppleMusicTransientException('http ${response.statusCode}');
+    }
+    return utf8.decode(response.bodyBytes, allowMalformed: true);
+  }
+
+  Future<Map<String, dynamic>> _getJson(Uri uri) async {
+    final response = await _request(uri);
+    if (response.statusCode != 200) {
+      throw AppleMusicTransientException('http ${response.statusCode}');
+    }
+    final decoded = _decodeJson(
+      utf8.decode(response.bodyBytes, allowMalformed: true),
+    );
+    if (decoded is! Map<String, dynamic>) {
+      throw const AppleMusicTransientException('unexpected response body');
+    }
+    return decoded;
+  }
+
+  Future<http.Response> _request(Uri uri) async {
+    _throwIfThrottled();
+    final http.Response response;
+    try {
+      response = await _client
+          .get(uri, headers: const {'User-Agent': _userAgent})
+          .timeout(_requestTimeout);
+    } on TimeoutException {
+      throw const AppleMusicTransientException('request timed out');
+    } on AppleMusicTransientException {
+      rethrow;
+    } catch (error) {
+      throw AppleMusicTransientException('network error: $error');
+    }
+    _noteThrottle(response);
+    if (response.statusCode == 429) {
+      throw const AppleMusicTransientException('rate limited');
+    }
+    if (response.statusCode == 403) {
+      throw const AppleMusicTransientException('forbidden');
+    }
+    return response;
+  }
+
+  void _noteThrottle(http.Response response) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (response.statusCode == 429) {
+      final retryAfter = int.tryParse(
+        response.headers['retry-after']?.trim() ?? '',
+      );
+      _throttleUntilMs =
+          now + Duration(seconds: retryAfter ?? 30).inMilliseconds;
+    } else if (response.statusCode == 403) {
+      _throttleUntilMs = now + const Duration(hours: 1).inMilliseconds;
+    }
+  }
+
+  void _throwIfThrottled() {
+    if (DateTime.now().millisecondsSinceEpoch < _throttleUntilMs) {
+      throw const AppleMusicTransientException('temporarily throttled');
+    }
+  }
+
+  String _primaryStorefront(String? override) {
+    final value = override?.trim().toLowerCase() ?? '';
+    if (_storefrontRe.hasMatch(value)) return value;
+    final code = PlatformDispatcher.instance.locale.countryCode?.toLowerCase();
+    return code != null && _storefrontRe.hasMatch(code) ? code : 'us';
+  }
+
+  List<String> _storefronts(String primary) => [
+    primary,
+    if (primary != 'us') 'us',
+  ];
+
+  String? _withStorefront(String url, String storefront) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.host != 'music.apple.com') return null;
+    final segments = [...uri.pathSegments];
+    if (segments.isEmpty) return null;
+    segments[0] = storefront;
+    return Uri(
+      scheme: uri.scheme.isEmpty ? 'https' : uri.scheme,
+      host: uri.host,
+      pathSegments: segments,
+    ).toString();
+  }
+
+  String _key(String kind, String value) => '$_cacheVersion|$kind|$value';
+
+  String _normalize(String value) =>
+      value.toLowerCase().replaceAll(_whitespaceRe, ' ').trim();
+
+  String _baseName(String value) {
+    var end = value.length;
+    for (final marker in const [' (', ' [', ' - ', ': ']) {
+      final index = value.indexOf(marker);
+      if (index > 0 && index < end) end = index;
+    }
+    return value.substring(0, end).trim();
+  }
+
+  String? _shortDate(String? value) {
+    if (value == null) return null;
+    final match = RegExp(r'^\d{4}-\d{2}-\d{2}').firstMatch(value);
+    return match?.group(0) ?? value;
+  }
+
+  String? _clean(Object? value) {
+    if (value is! String) return null;
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  String _cleanId(Object? value) {
+    if (value == null) return '';
+    return '$value'.trim();
+  }
+
+  String? _cleanMeta(String html, String property) {
+    final tagRe = RegExp(
+      '<meta[^>]*(?:property|name)="${RegExp.escape(property)}"[^>]*>',
+      caseSensitive: false,
+    );
+    final tag = tagRe.firstMatch(html)?.group(0);
+    if (tag == null) return null;
+    final content = RegExp(
+      r'content="([^"]*)"',
+      caseSensitive: false,
+    ).firstMatch(tag)?.group(1);
+    return _clean(content == null ? null : _decodeEntities(content));
+  }
+
+  String? _stripTracking(String? url) {
+    final trimmed = url?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    return trimmed.split('#').first.split('?').first;
+  }
+
+  String _stripTags(String value) => value.replaceAll(_htmlTagRe, ' ');
+
+  bool _isPlaceholderBiography(String biography) {
+    final firstSentence = biography
+        .split(_sentenceEndRe)
+        .first
+        .trim()
+        .toLowerCase();
+    return firstSentence.contains('apple music');
+  }
+
+  String _normalizeParagraphs(String text) {
+    final lines = text
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n')
+        .split('\n')
+        .map((line) => line.replaceAll(RegExp(r'[ \t]+'), ' ').trim());
+    final out = <String>[];
+    for (final line in lines) {
+      if (line.isEmpty && (out.isEmpty || out.last.isEmpty)) continue;
+      out.add(line);
+    }
+    while (out.isNotEmpty && out.last.isEmpty) {
+      out.removeLast();
+    }
+    return out.join('\n');
+  }
+
+  static final RegExp _hexEntityRe = RegExp(r'&#x([0-9a-fA-F]+);');
+  static final RegExp _decEntityRe = RegExp(r'&#(\d+);');
+
+  String _decodeEntities(String value) {
+    return value
+        .replaceAll('&amp;', '&')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&apos;', "'")
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAllMapped(
+          _hexEntityRe,
+          (match) => String.fromCharCode(int.parse(match.group(1)!, radix: 16)),
+        )
+        .replaceAllMapped(
+          _decEntityRe,
+          (match) => String.fromCharCode(int.parse(match.group(1)!)),
+        );
+  }
+}
+).hasMatch(explicitId)) return const [];
+    final artist = explicitId.isNotEmpty
+        ? AppleMusicArtist(artistId: explicitId, name: name)
+        : await resolveArtist(name, storefront: storefront, refresh: refresh);
     if (artist == null || artist.artistId.isEmpty ||
-        _normalize(artist.name) != _normalize(name)) return const [];
+        (explicitId.isEmpty && _normalize(artist.name) != _normalize(name))) return const [];
     final sf = _primaryStorefront(storefront);
     return await _cache.fetch<List<AppleMusicAlbumMatch>>(
           key: _key('artist-releases-v2', '${artist.artistId}|$sf'),
