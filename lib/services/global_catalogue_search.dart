@@ -26,35 +26,34 @@ class GlobalCatalogueSong {
 
 class GlobalCatalogueAlbum {
   const GlobalCatalogueAlbum({required this.name, required this.artist,
-    this.artworkUrl = ''});
+    this.artworkUrl = '', this.catalogueId = ''});
   final String name;
   final String artist;
   final String artworkUrl;
+  final String catalogueId;
 }
 
 class GlobalCatalogueArtist {
-  const GlobalCatalogueArtist({required this.name, this.artworkUrl = ''});
+  const GlobalCatalogueArtist({required this.name, this.artworkUrl = '', this.catalogueId = ''});
   final String name;
   final String artworkUrl;
+  final String catalogueId;
 }
 
-/// Artist search rows are displayed and opened by name, not by catalogue ID.
-/// Providers can return multiple catalog records for the same visible artist
-/// (Apple in particular may assign different artist IDs to those records).
-/// Retain the first result's ranking and spelling, but upgrade its portrait
-/// when another entry has artwork. Do not merge different *names*, and never
-/// deduplicate albums or song recordings using artist-only identity.
+/// Preserve distinct source identities even when artists have the same name.
+/// Unidentified legacy rows can still be de-duplicated by name.
 List<GlobalCatalogueArtist> deduplicateCatalogueArtists(
   Iterable<GlobalCatalogueArtist> artists,
 ) {
   final seen = <String, GlobalCatalogueArtist>{};
   for (final artist in artists) {
     final name = artist.name.trim();
-    final key = recommendationKey(name);
+    final key = '${recommendationKey(name)}|${artist.catalogueId}';
     if (key.isEmpty) continue;
     final incoming = GlobalCatalogueArtist(
       name: name,
       artworkUrl: artist.artworkUrl,
+      catalogueId: artist.catalogueId,
     );
     final previous = seen[key];
     if (previous == null) {
@@ -63,6 +62,7 @@ List<GlobalCatalogueArtist> deduplicateCatalogueArtists(
       seen[key] = GlobalCatalogueArtist(
         name: previous.name,
         artworkUrl: incoming.artworkUrl,
+        catalogueId: previous.catalogueId,
       );
     }
   }
@@ -145,13 +145,15 @@ GlobalCatalogueMatches parseSpotifyGlobal(Map<String, dynamic> json) {
             name: item['name'] as String,
             artist: _artistNames(item['artists']),
             artworkUrl: _bestArtwork(item['images']),
+            catalogueId: (item['id'] ?? '').toString(),
           ),
     ],
     artists: deduplicateCatalogueArtists([
       for (final item in _items(artists))
         if (item['name'] is String)
           GlobalCatalogueArtist(name: item['name'] as String,
-            artworkUrl: _bestArtwork(item['images'])),
+            artworkUrl: _bestArtwork(item['images']),
+            catalogueId: (item['id'] ?? '').toString()),
     ]),
   );
 }
@@ -292,11 +294,11 @@ class GlobalCatalogueSearchService {
       albums: [
         for (final album in albums)
           GlobalCatalogueAlbum(name: album.name, artist: album.artistName,
-            artworkUrl: album.artworkUrl ?? ''),
+            artworkUrl: album.artworkUrl ?? '', catalogueId: album.collectionId),
       ],
       artists: deduplicateCatalogueArtists([
         for (final artist in artists)
-          GlobalCatalogueArtist(name: artist.name),
+          GlobalCatalogueArtist(name: artist.name, catalogueId: artist.artistId),
       ]),
     );
   }
