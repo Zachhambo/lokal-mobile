@@ -7,16 +7,17 @@ import 'package:flick/core/theme/app_theme.dart';
 import 'package:flick/data/repositories/recently_played_repository.dart';
 import 'package:flick/features/recap/screens/listening_recap_screen.dart';
 import 'package:flick/features/recap/screens/replay_studio_screen.dart';
-import 'package:flick/features/recap/widgets/replay_artwork.dart';
 import 'package:flick/features/recap/widgets/replay_card_surface.dart';
 import 'package:flick/features/recap/widgets/replay_card_options.dart';
 import 'package:flick/features/recap/widgets/replay_graphics.dart';
 import 'package:flick/features/recap/widgets/replay_poster.dart';
-import 'package:flick/features/recap/widgets/replay_sections.dart';
+import 'package:flick/features/recap/widgets/recap_dashboard.dart';
 import 'package:flick/features/recap/widgets/replay_style.dart';
 import 'package:flick/models/song.dart';
+import 'package:flick/models/playlist.dart';
+import 'package:flick/providers/playlist_provider.dart';
+import 'package:flick/services/playlist_service.dart';
 import 'package:flick/models/nav_bar_config.dart';
-import 'package:flick/providers/app_preferences_provider.dart';
 import 'package:flick/services/color_extraction_service.dart';
 import 'package:flick/widgets/navigation/flick_nav_bar.dart';
 import 'package:flutter/material.dart';
@@ -28,6 +29,38 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
+
+
+class _PlaylistService extends PlaylistService {
+  final saved = <Playlist>[];
+  bool failUpdate = false;
+  Future<void>? beforeUpdate;
+
+  @override
+  Future<List<Playlist>> getPlaylists() async => List.of(saved);
+
+  @override
+  Future<Playlist?> createPlaylist(String name, {int? serverId}) async {
+    final playlist = Playlist(id: 'saved-${saved.length}', name: name,
+      createdAt: DateTime(2026, 11, 16));
+    saved.add(playlist);
+    return playlist;
+  }
+
+  @override
+  Future<Playlist?> updatePlaylist(Playlist playlist) async {
+    await beforeUpdate;
+    if (failUpdate) return null;
+    saved[saved.indexWhere((p) => p.id == playlist.id)] = playlist;
+    return playlist;
+  }
+
+  @override
+  Future<bool> deletePlaylist(String id) async {
+    saved.removeWhere((p) => p.id == id);
+    return true;
+  }
+}
 
 class _Repository implements RecentlyPlayedRepository {
   final changes = StreamController<void>.broadcast();
@@ -300,6 +333,88 @@ void main() {
   });
   tearDown(() => AppConstants.setAnimationsEnabled(true));
 
+
+  testWidgets('mix preview saves ordered metadata once and rolls back a failed save', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final service = _PlaylistService();
+    final songs = _fixture(ListeningRecapPeriod.weekly).topSongs.map((e) => e.song).toList();
+    Future<void> host() async {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [playlistServiceProvider.overrideWithValue(service)],
+        child: MaterialApp(theme: AppTheme.darkTheme,
+          home: RecapMixPage(key: UniqueKey(), title: 'Heavy rotation',
+            subtitle: 'November', detail: 'A frozen recap', songs: songs)),
+      ));
+      await tester.pumpAndSettle();
+    }
+    await host();
+    service.failUpdate = true;
+    await tester.tap(find.text('Save playlist'));
+    await tester.pumpAndSettle();
+    expect(service.saved, isEmpty);
+    service.failUpdate = false;
+    await tester.tap(find.text('Save playlist'));
+    await tester.pumpAndSettle();
+    expect(service.saved, hasLength(1));
+    expect(service.saved.single.songIds, songs.map((s) => s.id).toList());
+    expect(service.saved.single.songSnapshots.keys, songs.map((s) => s.id));
+    expect(find.text('Open saved playlist'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    // Let the app-wide confirmation toast finish before disposing its overlay.
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('all dashboard views fit large text on a small phone', (tester) async {
+    final repository = _Repository(_all(longText: true));
+    addTearDown(repository.changes.close);
+    await _pump(tester, repository, size: const Size(320, 640), textScale: 2);
+    for (final tab in ['songs', 'artists', 'albums', 'explore', 'overview']) {
+      final choice = find.byKey(ValueKey('recap-tab-$tab'));
+      await tester.ensureVisible(choice);
+      await tester.tap(choice);
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(ListView), const Offset(0, -350));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+
+  testWidgets('saving after preview closes refreshes the living library', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final service = _PlaylistService();
+    final gate = Completer<void>();
+    service.beforeUpdate = gate.future;
+    final container = ProviderContainer(overrides: [
+      playlistServiceProvider.overrideWithValue(service),
+    ]);
+    addTearDown(container.dispose);
+    final subscription = container.listen(playlistsProvider, (_, _) {});
+    addTearDown(subscription.close);
+    expect((await container.read(playlistsProvider.future)).playlists, isEmpty);
+    final navigator = GlobalKey<NavigatorState>();
+    final songs = _fixture(ListeningRecapPeriod.weekly).topSongs.map((e) => e.song).toList();
+    await tester.pumpWidget(UncontrolledProviderScope(container: container,
+      child: MaterialApp(navigatorKey: navigator, theme: AppTheme.darkTheme,
+        home: const Scaffold(body: Text('Library')))));
+    unawaited(navigator.currentState!.push(MaterialPageRoute<void>(
+      builder: (_) => RecapMixPage(title: 'Heavy rotation', subtitle: 'November',
+        detail: 'A frozen recap', songs: songs))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save playlist'));
+    await tester.pumpAndSettle();
+    navigator.currentState!.pop();
+    await tester.pumpAndSettle();
+    gate.complete();
+    await tester.pumpAndSettle();
+    final playlists = (await container.read(playlistsProvider.future)).playlists;
+    expect(playlists.single.songIds, songs.map((s) => s.id).toList());
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('living card overview and frozen studio snapshot', (
     tester,
   ) async {
@@ -308,8 +423,8 @@ void main() {
     await _pump(tester, repository);
     expect(find.text('Lokal Replay'), findsNWidgets(2));
     expectLokalRecapBrand();
-    expect(find.text('128'), findsOneWidget);
-    expect(find.text('Your most replayed track'), findsOneWidget);
+    expect(find.textContaining('128'), findsOneWidget);
+    expect(find.text('Your world,\non repeat.'), findsOneWidget);
     await _snapshot(tester, 'replay-overview');
     await tester.tap(find.byTooltip('Save / customize Replay'));
     await tester.pumpAndSettle();
@@ -420,7 +535,7 @@ void main() {
     repository.load = () async => _all();
     await tester.tap(find.text('Try again'));
     await tester.pumpAndSettle();
-    expect(find.text('128'), findsOneWidget);
+    expect(find.textContaining('128'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -545,26 +660,12 @@ void main() {
     await _pump(tester, repository);
     await tester.pumpAndSettle();
     await _snapshot(tester, 'replay-artwork-overview');
-    final scrollable = find
-        .descendant(
-          of: find.byType(ListView).first,
-          matching: find.byType(Scrollable),
-        )
-        .first;
-    for (final section in [
-      find.byWidgetPredicate(
-        (widget) => widget is ReplayRankings && !widget.artists,
-      ),
-      find.byType(ReplayArtistFeature),
-      find.byType(ReplayAlbumFeature),
-    ]) {
-      await tester.scrollUntilVisible(section, 280, scrollable: scrollable);
-      await tester.ensureVisible(section);
+    for (final tab in ['songs', 'artists', 'albums', 'explore', 'overview']) {
+      final choice = find.byKey(ValueKey('recap-tab-$tab'));
+      await tester.ensureVisible(choice);
+      await tester.tap(choice);
       await tester.pumpAndSettle();
-      await _snapshot(
-        tester,
-        'replay-section-${tester.widget(section).runtimeType}',
-      );
+      await _snapshot(tester, 'replay-$tab');
       expect(tester.takeException(), isNull);
     }
     await tester.tap(find.byTooltip('Save / customize Replay'));
@@ -594,37 +695,23 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-    'covers settle once, ornaments live, and app motion preference stops tickers',
-    (tester) async {
-      final repository = _Repository(_all());
-      addTearDown(repository.changes.close);
-      await _pump(tester, repository, reducedMotion: false);
-      final cover = find
-          .descendant(
-            of: find.byType(ReplayArtworkStage).first,
-            matching: find.byType(ReplayArtwork),
-          )
-          .last;
-      final settledCover = tester.getRect(cover);
-      expect(tester.binding.transientCallbackCount, greaterThan(0));
-      await tester.pump(const Duration(seconds: 8));
-      expect(tester.getRect(cover), settledCover);
-      repository.changes.add(null);
-      await tester.pump(const Duration(milliseconds: 250));
-      await tester.pump();
-      expect(tester.getRect(cover), settledCover);
-      final container = ProviderScope.containerOf(
-        tester.element(find.byType(ListeningRecapScreen)),
-      );
-      await container
-          .read(appPreferencesProvider.notifier)
-          .setAnimationsEnabled(false);
+  testWidgets('dashboard stays idle and all music views are reachable', (tester) async {
+    final repository = _Repository(_all());
+    addTearDown(repository.changes.close);
+    await _pump(tester, repository, reducedMotion: false);
+    await tester.pump(const Duration(seconds: 1));
+    expect(tester.binding.transientCallbackCount, 0);
+    for (final tab in ['songs', 'artists', 'albums', 'explore']) {
+      final choice = find.byKey(ValueKey('recap-tab-$tab'));
+      await tester.ensureVisible(choice);
+      await tester.tap(choice);
       await tester.pumpAndSettle();
-      expect(tester.binding.transientCallbackCount, 0);
+      expect(find.byKey(ValueKey('recap-view-$tab')), findsOneWidget);
       expect(tester.takeException(), isNull);
-    },
-  );
+    }
+    expect(find.text('Repeat listens'), findsOneWidget);
+    expect(find.text('81%'), findsOneWidget);
+  });
 
   test(
     'curated colors maintain body contrast across artwork hues and surface shading',
@@ -876,12 +963,10 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       expect(find.byType(ReplayStudioScreen), findsNothing);
-      final overview = tester.widget<ReplayOverview>(
-        find.byType(ReplayOverview),
+      final overview = tester.widget<RecapDashboard>(
+        find.byType(RecapDashboard),
       );
       expect(overview.recap.period, ListeningRecapPeriod.weekly);
-      expect(overview.options.look, ReplayLook.night);
-      expect(overview.options.layered, isFalse);
       expect(
         tester.widget<ListView>(find.byType(ListView)).controller!.offset,
         position,

@@ -883,9 +883,9 @@ class RecentlyPlayedRepository {
       topSong: rankedSongs.isEmpty ? null : rankedSongs.first,
       topArtist: rankedArtists.isEmpty ? null : rankedArtists.first,
       topAlbum: rankedAlbums.isEmpty ? null : rankedAlbums.first,
-      topSongs: rankedSongs.take(5).toList(),
-      topArtists: rankedArtists.take(5).toList(),
-      topAlbums: rankedAlbums.take(3).toList(),
+      topSongs: rankedSongs.take(100).toList(),
+      topArtists: rankedArtists.take(30).toList(),
+      topAlbums: rankedAlbums.take(30).toList(),
     );
   }
 
@@ -962,6 +962,14 @@ class RecentlyPlayedRepository {
       sampleRate: entity.sampleRate,
       bitDepth: entity.bitDepth,
       album: entity.album,
+      albumArtist: entity.albumArtist,
+      genre: entity.genre,
+      trackNumber: entity.trackNumber,
+      discNumber: entity.discNumber,
+      startOffsetMs: entity.startOffsetMs,
+      endOffsetMs: entity.endOffsetMs,
+      folderUri: entity.folderUri,
+      relativeFolderPath: entity.relativeFolderPath,
       filePath: entity.filePath,
       dateAdded: entity.dateAdded,
       sourceType: entity.sourceType,
