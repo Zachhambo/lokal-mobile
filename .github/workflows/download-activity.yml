@@ -69,5 +69,6 @@ jobs:
           test/discovery/online_song_save_test.dart
           test/playlist_links/playlist_unmatched_downloader_test.dart
           test/konnekted/collection_downloads_test.dart
+          test/konnekted/collection_download_actions_test.dart
           test/konnekted/library_recently_played_shelf_test.dart
           test/widgets/lokal/online_search_section_test.dart

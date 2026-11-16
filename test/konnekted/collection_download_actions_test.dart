@@ -1,3 +1,4 @@
+import 'package:flick/features/search/download_activity.dart';
 import 'package:flick/core/theme/lokal_theme.dart';
 import 'package:flick/core/theme/lokal_tokens.dart';
 import 'package:flick/features/konnekted/konnekted_data.dart';
@@ -39,8 +40,9 @@ const songs = [
 ];
 
 void main() {
-  setUp(() {
+  setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    await DownloadActivity.instance.load();
     resetPreparedPlaylistBanners();
   });
   for (final liked in [false, true]) {
@@ -111,6 +113,12 @@ void main() {
         await tester.pumpAndSettle();
         expect(downloaded, isEmpty);
         await tester.tap(find.widgetWithText(FilledButton, 'Download'));
+        for (var i = 0; i < 200 && downloaded.length < songs.length; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 5)),
+          );
+        }
         await tester.pumpAndSettle();
         expect(downloaded, ['one', 'two']);
         expect(find.textContaining('Downloaded 2'), findsOneWidget);
