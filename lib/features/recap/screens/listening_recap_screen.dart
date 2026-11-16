@@ -8,9 +8,8 @@ import '../../../providers/app_preferences_provider.dart';
 import '../../../widgets/common/display_mode_wrapper.dart';
 import '../../../widgets/common/flick_artwork_placeholder.dart';
 import '../widgets/replay_card_options.dart';
-import '../widgets/replay_poster.dart';
-import '../widgets/replay_reveal.dart';
-import '../widgets/replay_sections.dart';
+import '../widgets/recap_dashboard.dart';
+import '../../../core/theme/lokal_tokens.dart';
 import '../widgets/replay_style.dart';
 import 'replay_studio_screen.dart';
 
@@ -209,9 +208,9 @@ class _ListeningRecapScreenState extends ConsumerState<ListeningRecapScreen>
           IconButton(
             tooltip: l10n.back,
             onPressed: () => Navigator.maybePop(context),
-            icon: const Icon(
+            icon: Icon(
               Icons.arrow_back_rounded,
-              color: ReplayStyle.paper,
+              color: context.lokal.text,
             ),
           ),
           const SizedBox(width: 4),
@@ -222,7 +221,7 @@ class _ListeningRecapScreenState extends ConsumerState<ListeningRecapScreen>
                 fontSize: 22,
                 letterSpacing: -0.5,
                 fontWeight: FontWeight.w700,
-                color: ReplayStyle.paper,
+                color: context.lokal.text,
               ),
             ),
           ),
@@ -230,7 +229,7 @@ class _ListeningRecapScreenState extends ConsumerState<ListeningRecapScreen>
             tooltip: l10n.saveCustomizeReplay,
             onPressed: _loading || !_recap.hasData ? null : _openExport,
             icon: const Icon(Icons.ios_share_rounded),
-            color: ReplayStyle.silver,
+            color: context.lokal.muted,
           ),
         ],
       ),
@@ -246,7 +245,7 @@ class _ListeningRecapScreenState extends ConsumerState<ListeningRecapScreen>
             dimension: 28,
             child: CircularProgressIndicator(
               strokeWidth: 2,
-              color: ReplayStyle.silver,
+              color: context.lokal.muted,
             ),
           ),
         ),
@@ -290,10 +289,9 @@ class _ListeningRecapScreenState extends ConsumerState<ListeningRecapScreen>
         ),
       ),
       child: _recap.hasData
-          ? _ReplayScrollContent(
+          ? RecapDashboard(
               key: ValueKey(_period),
               recap: _recap,
-              options: _options,
               failed: _failed,
               onRetry: () => _loadRecaps(refresh: true),
               onExport: _openExport,
@@ -328,193 +326,26 @@ class _ListeningRecapScreenState extends ConsumerState<ListeningRecapScreen>
             const SizedBox(height: 40),
             Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 36,
                 height: 1.1,
                 fontWeight: FontWeight.w700,
-                color: ReplayStyle.paper,
+                color: context.lokal.text,
               ),
             ),
             const SizedBox(height: 16),
             Text(
               detail,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 16,
                 height: 1.5,
-                color: ReplayStyle.muted,
+                color: context.lokal.muted,
               ),
             ),
             if (action != null) ...[const SizedBox(height: 20), action],
           ],
         ),
       ),
-    );
-  }
-}
-
-class _ReplayScrollContent extends StatefulWidget {
-  final ListeningRecap recap;
-  final ReplayCardOptions options;
-  final bool failed;
-  final VoidCallback onRetry;
-  final VoidCallback onExport;
-
-  const _ReplayScrollContent({
-    super.key,
-    required this.recap,
-    required this.options,
-    required this.failed,
-    required this.onRetry,
-    required this.onExport,
-  });
-
-  @override
-  State<_ReplayScrollContent> createState() => _ReplayScrollContentState();
-}
-
-class _ReplayScrollContentState extends State<_ReplayScrollContent> {
-  final _scrollController = ScrollController();
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final recap = widget.recap;
-    final sections = <Widget>[
-      if (widget.failed)
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  l10n.showingYourLastLoadedReplay,
-                  style: TextStyle(color: ReplayStyle.muted),
-                ),
-              ),
-              TextButton(onPressed: widget.onRetry, child: Text(l10n.retry)),
-            ],
-          ),
-        ),
-      ReplayOverview(
-        key: ValueKey('${recap.period.name}-overview'),
-        recap: recap,
-        options: widget.options,
-        scrollController: _scrollController,
-      ),
-      if (recap.topSongs.isNotEmpty)
-        ReplayRankings(
-          recap: recap,
-          options: widget.options,
-          scrollController: _scrollController,
-        ),
-      if (recap.topArtist != null)
-        ReplayReveal(
-          key: ValueKey('${recap.period.name}-feature-artist'),
-          scrollController: _scrollController,
-          child: ReplayArtistFeature(
-            artist: recap.topArtist!,
-            recap: recap,
-            options: widget.options,
-            scrollController: _scrollController,
-          ),
-        ),
-      if (recap.topAlbum != null)
-        ReplayReveal(
-          key: ValueKey('${recap.period.name}-feature-album'),
-          scrollController: _scrollController,
-          child: ReplayAlbumFeature(
-            album: recap.topAlbum!,
-            recap: recap,
-            options: widget.options,
-            scrollController: _scrollController,
-          ),
-        ),
-      if (recap.topArtists.isNotEmpty)
-        ReplayRankings(
-          recap: recap,
-          scrollController: _scrollController,
-          artists: true,
-          options: widget.options,
-        ),
-      _closing(recap),
-    ];
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final inset = constraints.maxWidth > 600
-            ? (constraints.maxWidth - 600) / 2
-            : 16.0;
-        return ListView.separated(
-          controller: _scrollController,
-          padding: EdgeInsets.fromLTRB(
-            inset,
-            12,
-            inset,
-            40 + MediaQuery.paddingOf(context).bottom,
-          ),
-          itemCount: sections.length,
-          itemBuilder: (context, index) => sections[index],
-          separatorBuilder: (context, index) => const SizedBox(height: 32),
-        );
-      },
-    );
-  }
-
-  Widget _closing(ListeningRecap recap) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Divider(height: 1, color: ReplayStyle.rule),
-        const SizedBox(height: 28),
-        Text(
-          l10n.keepYourReplay,
-          style: TextStyle(
-            fontSize: 32,
-            height: 1.1,
-            letterSpacing: -0.8,
-            fontWeight: FontWeight.w700,
-            color: ReplayStyle.paper,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Text(
-          l10n.aLittleRecordOfWhatStayed,
-          style: TextStyle(color: ReplayStyle.muted, fontSize: 15),
-        ),
-        const SizedBox(height: 28),
-        Center(
-          child: ExcludeSemantics(
-            child: SizedBox(
-              width: 180,
-              child: AspectRatio(
-                aspectRatio: ReplayPoster.size.width / ReplayPoster.size.height,
-                child: FittedBox(
-                  fit: BoxFit.contain,
-                  child: ReplayPoster(recap: recap, options: widget.options),
-                ),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 28),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: ReplayStyle.acid,
-              foregroundColor: ReplayStyle.ink,
-              minimumSize: const Size(48, 52),
-            ),
-            onPressed: widget.onExport,
-            icon: const Icon(Icons.tune_rounded, size: 20),
-            label: Text(l10n.saveCustomizeReplay),
-          ),
-        ),
-      ],
     );
   }
 }
@@ -543,7 +374,7 @@ class ReplayPeriodPicker extends StatelessWidget {
               width: width,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: ReplayStyle.surface,
+                  color: context.lokal.surface2,
                   borderRadius: BorderRadius.circular(28),
                 ),
                 child: Stack(
@@ -559,7 +390,7 @@ class ReplayPeriodPicker extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(horizontal: 4),
                         child: DecoratedBox(
                           decoration: BoxDecoration(
-                            color: ReplayStyle.acid,
+                            color: context.lokal.accent,
                             borderRadius: BorderRadius.circular(24),
                           ),
                         ),
@@ -574,8 +405,8 @@ class ReplayPeriodPicker extends StatelessWidget {
                               child: TextButton(
                                 style: TextButton.styleFrom(
                                   foregroundColor: selected == period
-                                      ? ReplayStyle.ink
-                                      : ReplayStyle.muted,
+                                      ? context.lokal.onAccent
+                                      : context.lokal.muted,
                                   minimumSize: const Size(48, 52),
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 4,
