@@ -7,7 +7,6 @@ import 'package:flick/core/theme/app_theme.dart';
 import 'package:flick/data/repositories/recently_played_repository.dart';
 import 'package:flick/features/recap/screens/listening_recap_screen.dart';
 import 'package:flick/features/recap/screens/replay_studio_screen.dart';
-import 'package:flick/features/recap/widgets/replay_artwork.dart';
 import 'package:flick/features/recap/widgets/replay_card_surface.dart';
 import 'package:flick/features/recap/widgets/replay_card_options.dart';
 import 'package:flick/features/recap/widgets/replay_graphics.dart';
@@ -15,8 +14,10 @@ import 'package:flick/features/recap/widgets/replay_poster.dart';
 import 'package:flick/features/recap/widgets/recap_dashboard.dart';
 import 'package:flick/features/recap/widgets/replay_style.dart';
 import 'package:flick/models/song.dart';
+import 'package:flick/models/playlist.dart';
+import 'package:flick/providers/playlist_provider.dart';
+import 'package:flick/services/playlist_service.dart';
 import 'package:flick/models/nav_bar_config.dart';
-import 'package:flick/providers/app_preferences_provider.dart';
 import 'package:flick/services/color_extraction_service.dart';
 import 'package:flick/widgets/navigation/flick_nav_bar.dart';
 import 'package:flutter/material.dart';
@@ -28,6 +29,36 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
+
+
+class _PlaylistService extends PlaylistService {
+  final saved = <Playlist>[];
+  bool failUpdate = false;
+
+  @override
+  Future<List<Playlist>> getPlaylists() async => List.of(saved);
+
+  @override
+  Future<Playlist?> createPlaylist(String name, {int? serverId}) async {
+    final playlist = Playlist(id: 'saved-${saved.length}', name: name,
+      createdAt: DateTime(2026, 11, 16));
+    saved.add(playlist);
+    return playlist;
+  }
+
+  @override
+  Future<Playlist?> updatePlaylist(Playlist playlist) async {
+    if (failUpdate) return null;
+    saved[saved.indexWhere((p) => p.id == playlist.id)] = playlist;
+    return playlist;
+  }
+
+  @override
+  Future<bool> deletePlaylist(String id) async {
+    saved.removeWhere((p) => p.id == id);
+    return true;
+  }
+}
 
 class _Repository implements RecentlyPlayedRepository {
   final changes = StreamController<void>.broadcast();
@@ -299,6 +330,51 @@ void main() {
         .load();
   });
   tearDown(() => AppConstants.setAnimationsEnabled(true));
+
+
+  testWidgets('mix preview saves ordered metadata once and rolls back a failed save', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final service = _PlaylistService();
+    final songs = _fixture(ListeningRecapPeriod.weekly).topSongs.map((e) => e.song).toList();
+    Future<void> host() async {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [playlistServiceProvider.overrideWithValue(service)],
+        child: MaterialApp(theme: AppTheme.darkTheme,
+          home: RecapMixPage(key: UniqueKey(), title: 'Heavy rotation',
+            subtitle: 'November', detail: 'A frozen recap', songs: songs)),
+      ));
+      await tester.pumpAndSettle();
+    }
+    await host();
+    service.failUpdate = true;
+    await tester.tap(find.text('Save playlist'));
+    await tester.pumpAndSettle();
+    expect(service.saved, isEmpty);
+    service.failUpdate = false;
+    await tester.tap(find.text('Save playlist'));
+    await tester.pumpAndSettle();
+    expect(service.saved, hasLength(1));
+    expect(service.saved.single.songIds, songs.map((s) => s.id).toList());
+    expect(service.saved.single.songSnapshots.keys, songs.map((s) => s.id));
+    expect(find.text('Open saved playlist'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('all dashboard views fit large text on a small phone', (tester) async {
+    final repository = _Repository(_all(longText: true));
+    addTearDown(repository.changes.close);
+    await _pump(tester, repository, size: const Size(320, 640), textScale: 2);
+    for (final tab in ['songs', 'artists', 'albums', 'explore', 'overview']) {
+      final choice = find.byKey(ValueKey('recap-tab-$tab'));
+      await tester.ensureVisible(choice);
+      await tester.tap(choice);
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(ListView), const Offset(0, -350));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }
+  });
 
   testWidgets('living card overview and frozen studio snapshot', (
     tester,

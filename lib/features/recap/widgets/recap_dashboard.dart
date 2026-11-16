@@ -17,7 +17,7 @@ import '../../../providers/playlist_provider.dart';
 import '../../../widgets/lokal/lokal_toast.dart';
 import '../recap_mix.dart';
 import 'replay_artwork.dart';
-import 'replay_graphics.dart';
+import 'replay_card_surface.dart';
 import 'replay_style.dart';
 
 enum RecapView { overview, songs, artists, albums, explore }
@@ -209,7 +209,9 @@ class _RecapDashboardState extends ConsumerState<RecapDashboard> {
     final key = name.trim().toLowerCase();
     for (final song in widget.recap.topSongs) {
       if (songArtistNames(song.song).any((n) => n.toLowerCase() == key) &&
-          song.song.albumArt?.isNotEmpty == true) return song.song.albumArt;
+          song.song.albumArt?.isNotEmpty == true) {
+        return song.song.albumArt;
+      }
     }
     return null;
   }
@@ -300,6 +302,14 @@ class _RecapDashboardState extends ConsumerState<RecapDashboard> {
         _fact(lokalText('Plays per song'), recap.uniqueSongs == 0 ? '—' :
           (recap.totalPlays / recap.uniqueSongs).toStringAsFixed(1)),
       ])),
+      if (recap.topSongs.any((entry) => entry.song.genre?.trim().isNotEmpty == true)) ...[
+        const SizedBox(height: 16),
+        _heading(lokalText('Genres in rotation')),
+        _RecapSurface(child: Wrap(spacing: 8, runSpacing: 8,
+          children: _genreChips())),
+        _note(lokalText('Genres come from tags on your top tracks. Missing tags are left out.')),
+      ],
+      _note(lokalText('Listening time uses tracked time where available; older plays use track duration.')),
       const SizedBox(height: 20),
       _heading(lokalText('Turn the numbers into music'),
         detail: lokalText('Preview a mix, play it, or keep it as a playlist.')),
@@ -311,6 +321,34 @@ class _RecapDashboardState extends ConsumerState<RecapDashboard> {
       TextButton.icon(onPressed: widget.onExport,
         icon: const Icon(Icons.ios_share_rounded),
         label: Text(l10n.saveCustomizeReplay)),
+    ];
+  }
+
+  List<Widget> _genreChips() {
+    final counts = <String, int>{};
+    final names = <String, String>{};
+    for (final entry in widget.recap.topSongs) {
+      final genre = entry.song.genre?.trim() ?? '';
+      if (genre.isEmpty) continue;
+      final key = genre.toLowerCase();
+      names.putIfAbsent(key, () => genre);
+      counts[key] = (counts[key] ?? 0) + entry.plays;
+    }
+    final genres = counts.keys.toList()
+      ..sort((a, b) => counts[b]!.compareTo(counts[a]!));
+    return [
+      for (final genre in genres.take(8))
+        ActionChip(
+          label: Text(names[genre]!),
+          onPressed: () {
+            final songs = widget.recap.topSongs.where((entry) =>
+              entry.song.genre?.trim().toLowerCase() == genre)
+              .map((entry) => recapPlayableSong(entry.song)).toList(growable: false);
+            unawaited(pushLokal(context, RecapMixPage(
+              title: names[genre]!, subtitle: ReplayStyle.range(widget.recap),
+              detail: lokalText('Played tracks with this genre tag.'), songs: songs)));
+          },
+        ),
     ];
   }
 
@@ -485,6 +523,7 @@ class _RecapSurface extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(hero ? 28 : 20),
       child: BackdropFilter(
+        enabled: hero,
         filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
         child: DecoratedBox(
           decoration: BoxDecoration(
