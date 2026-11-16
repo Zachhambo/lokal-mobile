@@ -79,7 +79,9 @@ Future<void> lokalPlay(
   final request = (_libraryPlayRequests[player] ?? 0) + 1;
   _libraryPlayRequests[player] = request;
   final list = replayableStreamQueue(
-    shuffle ? (List<Song>.of(queue)..shuffle()) : queue,
+    shuffle
+        ? ref.read(playerServiceProvider).shuffleForPlayback(queue, (song) => song.id)
+        : queue,
   );
   // Playback must use the same reconstructed entry as the queue, not a
   // stale favorite object from before the provider refreshed.

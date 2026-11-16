@@ -594,7 +594,10 @@ class _LokalMusicDetailPageState extends ConsumerState<LokalMusicDetailPage> {
           : ordered.indexWhere((entry) => entry.track.metadata.key == selected);
       if (selectedIndex < 0) return;
       if (shuffle) {
-        ordered.shuffle();
+        final shuffled = ref.read(playerServiceProvider).shuffleForPlayback(
+          ordered, (entry) => entry.owned?.id ?? '',
+        );
+        ordered..clear()..addAll(shuffled);
         selectedIndex = 0;
       }
       final queue = [

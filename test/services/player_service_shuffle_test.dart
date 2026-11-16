@@ -65,6 +65,16 @@ void main() {
   });
 
   group('PlayerService shuffle ordering', () {
+    test('pins current while placing fresh songs before recently heard songs', () {
+      final songs = [song('a'), song('b'), song('c'), song('d')];
+      final result = buildShufflePlaybackOrder(
+        songs: songs, current: songs[2], recentIds: ['a', 'b'],
+        random: math.Random(7),
+      );
+      expect(result.map((entry) => entry.id), ['c', 'd', 'b', 'a']);
+      expect(songs.map((entry) => entry.id), ['a', 'b', 'c', 'd']);
+    });
+
     test('keeps the current song first when shuffle is enabled', () {
       final songs = [song('a'), song('b'), song('c'), song('d')];
 
