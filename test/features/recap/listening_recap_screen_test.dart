@@ -34,6 +34,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class _PlaylistService extends PlaylistService {
   final saved = <Playlist>[];
   bool failUpdate = false;
+  Future<void>? beforeUpdate;
 
   @override
   Future<List<Playlist>> getPlaylists() async => List.of(saved);
@@ -48,6 +49,7 @@ class _PlaylistService extends PlaylistService {
 
   @override
   Future<Playlist?> updatePlaylist(Playlist playlist) async {
+    await beforeUpdate;
     if (failUpdate) return null;
     saved[saved.indexWhere((p) => p.id == playlist.id)] = playlist;
     return playlist;
@@ -377,6 +379,40 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     }
+  });
+
+
+  testWidgets('saving after preview closes refreshes the living library', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final service = _PlaylistService();
+    final gate = Completer<void>();
+    service.beforeUpdate = gate.future;
+    final container = ProviderContainer(overrides: [
+      playlistServiceProvider.overrideWithValue(service),
+    ]);
+    addTearDown(container.dispose);
+    final subscription = container.listen(playlistsProvider, (_, _) {});
+    addTearDown(subscription.close);
+    expect((await container.read(playlistsProvider.future)).playlists, isEmpty);
+    final navigator = GlobalKey<NavigatorState>();
+    final songs = _fixture(ListeningRecapPeriod.weekly).topSongs.map((e) => e.song).toList();
+    await tester.pumpWidget(UncontrolledProviderScope(container: container,
+      child: MaterialApp(navigatorKey: navigator, theme: AppTheme.darkTheme,
+        home: const Scaffold(body: Text('Library')))));
+    unawaited(navigator.currentState!.push(MaterialPageRoute<void>(
+      builder: (_) => RecapMixPage(title: 'Heavy rotation', subtitle: 'November',
+        detail: 'A frozen recap', songs: songs))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save playlist'));
+    await tester.pumpAndSettle();
+    navigator.currentState!.pop();
+    await tester.pumpAndSettle();
+    gate.complete();
+    await tester.pumpAndSettle();
+    final playlists = (await container.read(playlistsProvider.future)).playlists;
+    expect(playlists.single.songIds, songs.map((s) => s.id).toList());
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('living card overview and frozen studio snapshot', (

@@ -630,6 +630,7 @@ class _RecapMixPageState extends ConsumerState<RecapMixPage> {
     }
     setState(() => _saving = true);
     final service = ref.read(playlistServiceProvider);
+    final container = ProviderScope.containerOf(context, listen: false);
     String? createdId;
     try {
       // New snapshot each time; never overwrite a user's existing playlist.
@@ -650,8 +651,14 @@ class _RecapMixPageState extends ConsumerState<RecapMixPage> {
         songAddedAt: {for (final s in unique.values) s.id: DateTime.now()},
       ));
       if (saved == null) throw StateError('Could not save playlist');
+      // The app's library can remain mounted after this preview has closed.
+      // Keep persistence independent of this route's lifetime.
+      try {
+        container.invalidate(playlistsProvider);
+      } on StateError {
+        // The entire app provider scope may have been disposed during saving.
+      }
       if (!mounted) return;
-      ref.invalidate(playlistsProvider);
       setState(() => _savedId = saved.id);
       LokalToast.show(context, lokalText('Playlist saved'));
     } catch (_) {
