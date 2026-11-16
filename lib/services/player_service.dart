@@ -862,6 +862,7 @@ class PlayerService {
   /// and system (ExoPlayer + LoudnessEnhancer) tiers may exceed 1.0.
   bool _extendedVolumeEnabled = false;
   int _currentBoostMb = 0;
+  int? _currentBoostSessionId;
 
   /// Effective ReplayGain for the current track ('off' | 'track' | 'album').
   /// Pushed to the Rust engine per-source; folded into the just_audio volume
@@ -1541,7 +1542,7 @@ class PlayerService {
     } else {
       final player = _justAudioPlayer;
       if (player != null) {
-        await player.setVolume(_currentVolume);
+        await player.setVolume(math.min(_systemEffectiveVolume, 1.0));
         await player.setSpeed(playbackSpeedNotifier.value);
       }
     }
@@ -3135,9 +3136,12 @@ class PlayerService {
       if (_usingRustBackend && _rustAudioService.isInitialized) {
         await IosLocalAudioRequests.wait(_rustAudioService.setVolume(volume));
       } else {
+        final effective = _systemEffectiveVolume;
         await IosLocalAudioRequests.wait(
-          _justAudioPlayer?.setVolume(volume) ?? Future<void>.value(),
+          _justAudioPlayer?.setVolume(math.min(effective, 1.0)) ??
+              Future<void>.value(),
         );
+        await _reconcileSystemVolumeBoost(effective);
       }
     } catch (e) {
       _debugLog('[AudioFocus] Failed to ${ducked ? 'apply' : 'lift'} duck: $e');
@@ -3192,8 +3196,18 @@ class PlayerService {
           if (!identical(_justAudioPlayer, player)) return;
           lastEqSessionId = sessionId;
           unawaited(reapplyEqualizer());
+          unawaited(
+            _reconcileSystemVolumeBoost(
+              !_castingService.isActive &&
+                      _determineCurrentTier() == VolumeTier.system
+                  ? _systemEffectiveVolume
+                  : 0.0,
+            ),
+          );
         });
-        await IosLocalAudioRequests.wait(player.setVolume(_currentVolume));
+        await IosLocalAudioRequests.wait(
+          player.setVolume(math.min(_systemEffectiveVolume, 1.0)),
+        );
         await IosLocalAudioRequests.wait(
           player.setSpeed(playbackSpeedNotifier.value),
         );
@@ -3217,7 +3231,9 @@ class PlayerService {
       }
     }
 
-    await IosLocalAudioRequests.wait(player.setVolume(_currentVolume));
+    await IosLocalAudioRequests.wait(
+      player.setVolume(math.min(_systemEffectiveVolume, 1.0)),
+    );
     await IosLocalAudioRequests.wait(
       player.setSpeed(playbackSpeedNotifier.value),
     );
@@ -3616,11 +3632,16 @@ class PlayerService {
     } else {
       await _reconcileSystemVolumeBoost(
         _determineCurrentTier() == VolumeTier.system
-            ? math.min(_currentVolume, 1.0) * _replayGainState.linear
+            ? _systemEffectiveVolume
             : 0.0,
       );
     }
   }
+
+  double get _systemEffectiveVolume =>
+      _currentVolume.clamp(0.0, maxVolume) *
+      _replayGainState.linear *
+      (_isDucked ? _duckVolumeScale : 1.0);
 
   /// Apply or release the LoudnessEnhancer boost on the just_audio session.
   /// [effectiveVolume] is the volume to realise on the system tier (already
@@ -3630,19 +3651,30 @@ class PlayerService {
   Future<void> _reconcileSystemVolumeBoost(double effectiveVolume) async {
     if (!Platform.isAndroid) {
       if (_currentBoostMb != 0) _currentBoostMb = 0;
+      _currentBoostSessionId = null;
       return;
     }
     final desiredMb = effectiveVolume > 1.0
         ? AndroidJustAudioProcessingService.volumeToBoostMb(effectiveVolume)
         : 0;
-    if (desiredMb == _currentBoostMb) return;
-    _currentBoostMb = desiredMb;
+    final sessionId = desiredMb > 0 ? androidAudioSessionId : null;
+    // A request made before playback must be retried once a session exists.
+    if (desiredMb > 0 && (sessionId == null || sessionId <= 0)) return;
+    if (desiredMb == _currentBoostMb && sessionId == _currentBoostSessionId) {
+      return;
+    }
     try {
       await androidJustAudioProcessingService.setVolumeBoost(
         gainMb: desiredMb,
-        audioSessionId: androidAudioSessionId,
+        audioSessionId: sessionId,
       );
+      _currentBoostMb = desiredMb;
+      _currentBoostSessionId = sessionId;
     } catch (e) {
+      // The native failure handler releases the effect. Do not let an old
+      // successful cache entry suppress a retry of that same gain/session.
+      _currentBoostMb = 0;
+      _currentBoostSessionId = null;
       _debugLog('[VolFlow] LoudnessEnhancer boost failed: $e');
     }
   }
@@ -8659,8 +8691,9 @@ class PlayerService {
         break;
       case VolumeTier.system:
         final player = _justAudioPlayer;
-        final effective =
-            math.min(clampedVolume, 1.0) * _replayGainState.linear;
+        final effective = clampedVolume *
+            _replayGainState.linear *
+            (_isDucked ? _duckVolumeScale : 1.0);
         if (player != null) {
           // ExoPlayer clamps at 1.0; the boost portion (>1.0, from extended
           // volume and/or ReplayGain) is applied via Android LoudnessEnhancer.
@@ -8788,8 +8821,7 @@ class PlayerService {
     if (_determineCurrentTier() != VolumeTier.system) return;
     final player = _justAudioPlayer;
     if (player == null) return;
-    final effective =
-        math.min(_currentVolume.clamp(0.0, 1.0), 1.0) * _replayGainState.linear;
+    final effective = _systemEffectiveVolume;
     try {
       await IosLocalAudioRequests.wait(
         player.setVolume(math.min(effective, 1.0)),
