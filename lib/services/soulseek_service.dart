@@ -895,6 +895,10 @@ class SoulseekService extends ChangeNotifier with WidgetsBindingObserver {
       _importRetryAfter[file.key] = DateTime.now().add(
         const Duration(minutes: 2),
       );
+      await DownloadActivity.instance.transfer(
+        id: _activityId(file), title: file.name, artist: 'Soulseek',
+        state: 'Failed', progress: 0,
+      );
       error = 'Could not add ' + file.name + ' to the library: $e';
       notifyListeners();
     } finally {

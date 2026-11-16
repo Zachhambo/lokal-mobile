@@ -7,7 +7,6 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final calls = <MethodCall>[];
   setUp(() {
-    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     calls.clear();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(DownloadProgressNotification.channel, (call) async {
@@ -16,13 +15,12 @@ void main() {
     });
   });
   tearDown(() {
-    debugDefaultTargetPlatformOverride = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(DownloadProgressNotification.channel, null);
   });
 
   testWidgets('coalesces percentages and completion retires pending progress', (tester) async {
-    final notification = DownloadProgressNotification();
+    final notification = DownloadProgressNotification(platform: () => TargetPlatform.iOS);
     addTearDown(notification.dispose);
     notification.update(title: 'Downloading music', message: 'Track', busy: true, begin: true);
     await notification.flushed;
@@ -48,14 +46,14 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(DownloadProgressNotification.channel,
             (_) async => throw PlatformException(code: 'DENIED'));
-    final notification = DownloadProgressNotification();
+    final notification = DownloadProgressNotification(platform: () => TargetPlatform.iOS);
     addTearDown(notification.dispose);
     notification.update(title: 'Downloading music', message: 'Track', busy: true);
     await notification.flushed;
   });
 
   test('unknown-length transfers remain indeterminate', () async {
-    final notification = DownloadProgressNotification();
+    final notification = DownloadProgressNotification(platform: () => TargetPlatform.iOS);
     addTearDown(notification.dispose);
     notification.update(title: 'Downloading music', message: 'Track', busy: true);
     await notification.flushed;

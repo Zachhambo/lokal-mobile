@@ -6,6 +6,9 @@ import 'package:permission_handler/permission_handler.dart';
 
 /// Coalesces download progress independently of playback, sync and metadata jobs.
 class DownloadProgressNotification {
+  DownloadProgressNotification({TargetPlatform Function()? platform})
+      : _platform = platform ?? (() => defaultTargetPlatform);
+  final TargetPlatform Function() _platform;
   static const channel = MethodChannel('lokal/library_sync_notification');
   Timer? _timer;
   Map<String, Object?>? _pending;
@@ -21,7 +24,7 @@ class DownloadProgressNotification {
     double? progress,
     bool begin = false,
   }) {
-    if (kIsWeb || !{TargetPlatform.android, TargetPlatform.iOS}.contains(defaultTargetPlatform)) return;
+    if (kIsWeb || !{TargetPlatform.android, TargetPlatform.iOS}.contains(_platform())) return;
     _pending = {
       'kind': 'download',
       'title': title,
@@ -51,7 +54,7 @@ class DownloadProgressNotification {
     _sentAt = DateTime.now();
     _tail = _tail.then((_) async {
       try {
-        if (payload['begin'] == true && defaultTargetPlatform == TargetPlatform.android) {
+        if (payload['begin'] == true && _platform() == TargetPlatform.android) {
           // Ask only in response to a requested download, never on app launch.
           await Permission.notification.request();
         }

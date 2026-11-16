@@ -17,6 +17,9 @@ on:
       - 'test/konnekted/library_recently_played_shelf_test.dart'
       - '.github/workflows/download-activity.yml'
   workflow_dispatch:
+concurrency:
+  group: download-activity-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -27,32 +30,35 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: ./.github/actions/android-toolchain
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: '3.47.1'
+          channel: stable
+          cache: true
+      - name: Resolve locked dependencies
+        run: flutter pub get --enforce-lockfile
       - name: Analyze download integration
-        run: |
-          set -euo pipefail
-          for file in \
-            lib/features/search/download_activity.dart \
-            lib/features/search/library_download.dart \
-            lib/features/search/online_song_save.dart \
-            lib/features/playlist_links/playlist_unmatched_downloader.dart \
-            lib/features/search/widgets/online_search_section.dart \
-            lib/features/konnekted/konnekted_discovery.dart \
-            lib/features/konnekted/konnekted_discovery_view.dart \
-            lib/features/search/widgets/global_catalogue_search_section.dart \
-            lib/features/konnekted/library/collection_downloads.dart \
-            lib/features/konnekted/library/lokal_music_detail_page.dart \
-            lib/services/soulseek_service.dart \
-            lib/features/konnekted/konnekted_library.dart \
-            lib/features/spotify/spotify_playlists_screen.dart \
-            lib/features/discovery/youtube_music_playlists_screen.dart \
-            lib/features/konnekted/library/lokal_library_pages.dart \
-            lib/features/discovery/youtube_audio.dart \
-            lib/services/download_progress_notification.dart \
-            test/services/download_progress_notification_test.dart \
-            test/discovery/download_activity_test.dart; do
-            dart analyze --no-fatal-warnings "$file"
-          done
+        run: >-
+          flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings
+          lib/features/search/download_activity.dart
+          lib/features/search/library_download.dart
+          lib/features/search/online_song_save.dart
+          lib/features/playlist_links/playlist_unmatched_downloader.dart
+          lib/features/search/widgets/online_search_section.dart
+          lib/features/konnekted/konnekted_discovery.dart
+          lib/features/konnekted/konnekted_discovery_view.dart
+          lib/features/search/widgets/global_catalogue_search_section.dart
+          lib/features/konnekted/library/collection_downloads.dart
+          lib/features/konnekted/library/lokal_music_detail_page.dart
+          lib/services/soulseek_service.dart
+          lib/features/konnekted/konnekted_library.dart
+          lib/features/spotify/spotify_playlists_screen.dart
+          lib/features/discovery/youtube_music_playlists_screen.dart
+          lib/features/konnekted/library/lokal_library_pages.dart
+          test/discovery/download_activity_test.dart
+          lib/services/download_progress_notification.dart
+          test/services/download_progress_notification_test.dart
+          lib/features/discovery/youtube_audio.dart
       - name: Verify download lifecycle, saving, playlist downloads and library navigation
         run: >-
           flutter test --no-pub
