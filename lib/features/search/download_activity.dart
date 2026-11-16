@@ -1,3 +1,5 @@
+import 'package:flick/services/download_progress_notification.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -45,7 +47,9 @@ class DownloadActivityEntry {
 /// A zone joins preparation, download and library save into one history row,
 /// including nested playlist/player save calls and concurrent requests.
 class DownloadActivity extends ChangeNotifier {
-  DownloadActivity();
+  DownloadActivity({DownloadProgressNotification? notifications})
+      : _notifications = notifications ?? DownloadProgressNotification();
+  final DownloadProgressNotification _notifications;
   static final instance = DownloadActivity();
   static final _zoneKey = Object();
   static const storageKey = 'lokal.download_activity.v1';
@@ -114,6 +118,7 @@ class DownloadActivity extends ChangeNotifier {
     job.state = 'Downloading';
     job.progress = null;
     notifyListeners();
+    _publish(job, begin: true);
     _persist();
     return runZoned(() async {
       try {
@@ -127,6 +132,7 @@ class DownloadActivity extends ChangeNotifier {
         rethrow;
       } finally {
         notifyListeners();
+        _publish(job);
         _persist();
       }
     }, zoneValues: {_zoneKey: job});
@@ -154,6 +160,7 @@ class DownloadActivity extends ChangeNotifier {
     entry.state = state;
     entry.progress = state == 'Downloading' ? progress.clamp(0.0, 1.0) : null;
     notifyListeners();
+    _publish(entry, begin: changed && entry.state == 'Queued');
     if (changed) _persist();
   }
 
@@ -172,7 +179,30 @@ class DownloadActivity extends ChangeNotifier {
         now.difference(_lastProgressNotice).inMilliseconds >= 100) {
       _lastProgressNotice = now;
       notifyListeners();
+      _publish(entry);
     }
+  }
+
+  void _publish(DownloadActivityEntry changed, {bool begin = false}) {
+    final active = _entries.where((entry) => entry.active).toList();
+    final primary = active.isEmpty ? changed : active.first;
+    final percent = primary.progress == null ? '' :
+        ' · ${(primary.progress! * 100).round()}%';
+    final others = active.length <= 1 ? '' : ' · ${active.length} active downloads';
+    _notifications.update(
+      title: active.isNotEmpty ? 'Downloading music' :
+          changed.state == 'Completed' ? 'Download complete' : 'Download failed',
+      message: '${primary.title} · ${primary.state}$percent$others',
+      busy: active.isNotEmpty,
+      progress: primary.progress,
+      begin: begin,
+    );
+  }
+
+  @override
+  void dispose() {
+    _notifications.dispose();
+    super.dispose();
   }
 
   void saved(String path) {

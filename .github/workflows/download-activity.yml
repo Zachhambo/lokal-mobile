@@ -6,6 +6,10 @@ on:
       - 'lib/features/konnekted/**'
       - 'lib/features/playlist_links/playlist_unmatched_downloader.dart'
       - 'lib/services/soulseek_service.dart'
+      - 'lib/services/download_progress_notification.dart'
+      - 'android/app/src/main/kotlin/com/mossapps/flick/LokalLibrarySyncNotification.kt'
+      - 'ios/Runner/AppDelegate.swift'
+      - 'test/services/download_progress_notification_test.dart'
       - 'lib/features/spotify/spotify_playlists_screen.dart'
       - 'lib/features/discovery/youtube_music_playlists_screen.dart'
       - 'test/discovery/download_activity_test.dart'
@@ -42,6 +46,8 @@ jobs:
             lib/features/spotify/spotify_playlists_screen.dart \
             lib/features/discovery/youtube_music_playlists_screen.dart \
             lib/features/konnekted/library/lokal_library_pages.dart \
+            lib/services/download_progress_notification.dart \
+            test/services/download_progress_notification_test.dart \
             test/discovery/download_activity_test.dart; do
             dart analyze --no-fatal-warnings "$file"
           done
@@ -49,6 +55,7 @@ jobs:
         run: >-
           flutter test --no-pub
           test/discovery/download_activity_test.dart
+          test/services/download_progress_notification_test.dart
           test/discovery/library_download_test.dart
           test/discovery/online_song_save_test.dart
           test/playlist_links/playlist_unmatched_downloader_test.dart
