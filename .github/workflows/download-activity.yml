@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'lib/features/search/**'
+      - 'lib/features/discovery/youtube_audio.dart'
       - 'lib/features/konnekted/**'
       - 'lib/features/playlist_links/playlist_unmatched_downloader.dart'
       - 'lib/services/soulseek_service.dart'
@@ -46,6 +47,7 @@ jobs:
             lib/features/spotify/spotify_playlists_screen.dart \
             lib/features/discovery/youtube_music_playlists_screen.dart \
             lib/features/konnekted/library/lokal_library_pages.dart \
+            lib/features/discovery/youtube_audio.dart \
             lib/services/download_progress_notification.dart \
             test/services/download_progress_notification_test.dart \
             test/discovery/download_activity_test.dart; do
@@ -56,6 +58,7 @@ jobs:
           flutter test --no-pub
           test/discovery/download_activity_test.dart
           test/services/download_progress_notification_test.dart
+          test/discovery/youtube_audio_test.dart
           test/discovery/library_download_test.dart
           test/discovery/online_song_save_test.dart
           test/playlist_links/playlist_unmatched_downloader_test.dart

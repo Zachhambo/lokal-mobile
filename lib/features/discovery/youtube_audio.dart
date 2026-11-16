@@ -59,11 +59,16 @@ class YoutubeAudio {
     DiscoveryTrack track,
     DiscoveryPlaybackCache cache, {
     Future<void>? cancel,
+    void Function(int received, int? total)? onProgress,
   }) async {
     for (var attempt = 0; ; attempt++) {
       final audio = await resolve(track.id, cancel: cancel);
       try {
-        return await cache.prepare(track, audio, cancel: cancel);
+        return await cache.prepare(
+          track, audio, cancel: cancel,
+          onProgress: onProgress == null ? null :
+              (received) => onProgress(received, audio.length),
+        );
       } on DiscoveryException catch (error) {
         if (error.message == 'Request cancelled.' || attempt >= 2) rethrow;
         final reason = error.message.toLowerCase();

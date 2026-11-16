@@ -191,7 +191,8 @@ class DownloadActivity extends ChangeNotifier {
     final others = active.length <= 1 ? '' : ' · ${active.length} active downloads';
     _notifications.update(
       title: active.isNotEmpty ? 'Downloading music' :
-          changed.state == 'Completed' ? 'Download complete' : 'Download failed',
+          changed.state == 'Completed' ? 'Download complete' :
+          changed.state == 'Cancelled' ? 'Download cancelled' : 'Download failed',
       message: '${primary.title} · ${primary.state}$percent$others',
       busy: active.isNotEmpty,
       progress: primary.progress,

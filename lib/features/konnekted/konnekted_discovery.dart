@@ -1703,7 +1703,17 @@ Future<List<OnlineSource>> _playbackSources(
             for (final track in await YoutubeMusicCatalog(web).search(query))
               OnlineResult(track, artwork: track.artwork),
           ],
-          play: (found) => youtube.prepare(found, cache(), cancel: cancel),
+          play: (found) => youtube.prepare(
+            found, cache(), cancel: cancel,
+            onProgress: forDownload || DownloadActivity.instance.current != null
+                ? (received, total) {
+              final text = total != null && total > 0
+                  ? 'Downloading from YouTube Music… ${(received * 100 / total).clamp(0, 100).round()}%'
+                  : 'Downloading from YouTube Music…';
+              DownloadActivity.instance.status(text);
+              onStatus?.call(text);
+            } : null,
+          ),
         ),
       if (!httpOnly &&
           (selectedSourceId == null || selectedSourceId == 'mono') &&
@@ -2486,6 +2496,14 @@ Future<Song?> findDiscoverySong(
             direct,
             _playbackCache(web, additionalProtectedPaths),
             cancel: cancel,
+            onProgress: DownloadActivity.instance.current != null
+                ? (received, total) {
+              final text = total != null && total > 0
+                  ? 'Downloading from YouTube Music… ${(received * 100 / total).clamp(0, 100).round()}%'
+                  : 'Downloading from YouTube Music…';
+              DownloadActivity.instance.status(text);
+              onStatus?.call(text);
+            } : null,
           );
           final song = resolved.copyWith(sourceDisplayName: 'YouTube Music');
           OnlineSongSaveRegistry.instance.register(
