@@ -1,0 +1,26 @@
+name: Fewer repeats shuffle checks
+on:
+  pull_request:
+    paths:
+      - 'lib/services/fewer_repeats_shuffle.dart'
+      - 'lib/services/player_service.dart'
+      - 'lib/data/repositories/recently_played_repository.dart'
+      - 'lib/features/konnekted/library/**'
+      - 'lib/features/spotify/provider_playlist_track_browser.dart'
+      - 'lib/features/folders/screens/folders_screen.dart'
+      - 'test/services/*shuffle_test.dart'
+      - '.github/workflows/fewer-repeats-shuffle.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  shuffle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/android-toolchain
+      - name: Test shuffle ordering and current track preservation
+        run: flutter test --no-pub test/services/fewer_repeats_shuffle_test.dart test/services/player_service_shuffle_test.dart

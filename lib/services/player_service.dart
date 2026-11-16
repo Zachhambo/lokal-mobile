@@ -1,3 +1,4 @@
+import 'fewer_repeats_shuffle.dart';
 import 'package:flick/services/ios_local_audio_requests.dart';
 import 'package:flick/services/local_audio_lifecycle.dart';
 import 'package:flick/services/ios_local_audio_players.dart';
@@ -322,25 +323,22 @@ bool shouldReplaceQueuedAudioSource(Song queued, Song selected) =>
 List<Song> buildShufflePlaybackOrder({
   required List<Song> songs,
   required Song? current,
+  List<String> recentIds = const [],
   math.Random? random,
 }) {
-  final reordered = List<Song>.from(songs);
-  if (reordered.length < 2) return reordered;
-
-  if (current == null) {
-    reordered.shuffle(random);
-    return reordered;
-  }
-
-  final currentIndex = reordered.indexWhere((song) => song.id == current.id);
-  if (currentIndex == -1) {
-    reordered.shuffle(random);
-    return reordered;
-  }
-
-  final currentSong = reordered.removeAt(currentIndex);
-  reordered.shuffle(random);
-  return <Song>[currentSong, ...reordered];
+  final remaining = List<Song>.of(songs);
+  final exact = current == null ? -1 : remaining.indexOf(current);
+  final index = exact >= 0
+      ? exact
+      : remaining.indexWhere((song) => song.id == current?.id);
+  final pinned = index < 0 ? null : remaining.removeAt(index);
+  final shuffled = fewerRepeatsShuffle(
+    remaining,
+    idOf: (song) => song.id,
+    recentIds: recentIds,
+    random: random,
+  );
+  return [if (pinned != null) pinned, ...shuffled];
 }
 
 @visibleForTesting
@@ -766,6 +764,23 @@ class PlayerService {
   Future<List<Song>>? _autoplayOnlinePreviewJob;
   int _autoplayPreviewGeneration = 0;
   static const int _autoplayPreviewCount = 8;
+  List<String> _shuffleRecentIds = [];
+
+  List<String> get _shuffleHistoryForPlayback {
+    final current = currentSongNotifier.value?.id;
+    return {
+      if (current != null) current,
+      ..._shuffleRecentIds,
+    }.take(shuffleHistoryLimit).toList();
+  }
+
+  void _rememberShufflePlay(String id) {
+    _shuffleRecentIds = [
+      id,
+      ..._shuffleRecentIds.where((value) => value != id),
+    ].take(shuffleHistoryLimit).toList();
+  }
+
   final RecentlyPlayedRepository _recentlyPlayedRepository =
       RecentlyPlayedRepository();
   late final ReplayPlayTracker _replayPlayTracker = ReplayPlayTracker(
@@ -4397,6 +4412,7 @@ class PlayerService {
       songId: song.id,
       position: position,
     );
+    if (counted) _rememberShufflePlay(song.id);
     if (counted && _shouldPersistSong(song)) {
       unawaited(
         _recentlyPlayedRepository.recordPlay(
@@ -6882,6 +6898,7 @@ class PlayerService {
         final shuffled = buildShufflePlaybackOrder(
           songs: _playlist,
           current: song,
+          recentIds: _shuffleHistoryForPlayback,
         );
         _playlist
           ..clear()
@@ -7466,6 +7483,14 @@ class PlayerService {
   }
 
   Future<void> restorePlaybackModes() async {
+    try {
+      final ids = await _recentlyPlayedRepository.getRecentShuffleIds();
+      _shuffleRecentIds = {..._shuffleRecentIds, ...ids}
+          .take(shuffleHistoryLimit).toList();
+    } catch (error) {
+      _debugLog('Shuffle history unavailable: $error');
+    }
+
     final shuffleIdx = await _appPreferencesService.getShuffleMode();
     if (shuffleIdx >= 0 && shuffleIdx < ShuffleMode.values.length) {
       shuffleModeNotifier.value = ShuffleMode.values[shuffleIdx];
@@ -8405,6 +8430,11 @@ class PlayerService {
 
   // ==================== Shuffle/Loop Toggles ====================
 
+  /// Used by Shuffle buttons before choosing the first song, so a recently
+  /// played song is not pinned to the front by an otherwise random UI pick.
+  List<T> shuffleForPlayback<T>(List<T> items, String Function(T) idOf) =>
+      fewerRepeatsShuffle(items, idOf: idOf, recentIds: _shuffleHistoryForPlayback);
+
   Future<void> toggleShuffle() async {
     final enable = !shuffleModeNotifier.value.isActive;
     await setShuffleMode(enable ? ShuffleMode.songs : ShuffleMode.off);
@@ -8432,7 +8462,11 @@ class PlayerService {
     }
 
     final reorderedBasePlaylist = enable
-        ? buildShufflePlaybackOrder(songs: basePlaylist, current: current)
+        ? buildShufflePlaybackOrder(
+            songs: basePlaylist,
+            current: current,
+            recentIds: _shuffleHistoryForPlayback,
+          )
         : restorePlaybackOrder(
             originalPlaylist: _originalPlaylist,
             current: current,
@@ -9826,7 +9860,12 @@ class PlayerService {
       final shouldShuffle =
           shuffleModeNotifier.value == ShuffleMode.songsAndCategories;
       final ordered = shouldShuffle
-          ? (List<Song>.of(songs)..shuffle(rng))
+          ? fewerRepeatsShuffle(
+              songs,
+              idOf: (song) => song.id,
+              recentIds: _shuffleHistoryForPlayback,
+              random: rng,
+            )
           : songs;
       await _playInternal(ordered.first, playlist: ordered);
     } catch (e) {

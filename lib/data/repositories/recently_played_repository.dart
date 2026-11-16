@@ -463,6 +463,16 @@ class RecentlyPlayedRepository {
     return grouped;
   }
 
+  /// IDs only: shuffle must not hydrate the entire song library.
+  Future<List<String>> getRecentShuffleIds() async {
+    final entries = await _isar.recentlyPlayedEntitys
+        .where(sort: Sort.desc)
+        .anyPlayedAt()
+        .limit(200)
+        .findAll();
+    return entries.map((entry) => entry.songId.toString()).toList();
+  }
+
   /// Get flat list of recently played entries (most recent first).
   Future<List<RecentlyPlayedEntry>> getRecentHistory({int limit = 50}) async {
     return getRecentHistoryPaginated(offset: 0, limit: limit);

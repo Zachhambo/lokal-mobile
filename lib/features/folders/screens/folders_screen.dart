@@ -1,3 +1,4 @@
+import 'package:flick/services/player_service.dart';
 import 'package:flick/core/navigation/lokal_page_motion.dart';
 import 'dart:math';
 
@@ -56,7 +57,14 @@ Future<void> _showFolderActions(
     await AddToPlaylistSheet.showSongs(context, songsToAdd);
   } else {
     final ordered = List<Song>.of(songs);
-    if (action == 'shuffle') ordered.shuffle(Random());
+    if (action == 'shuffle') {
+      final shuffled = PlayerService().shuffleForPlayback(
+        ordered, (song) => song.id,
+      );
+      ordered
+        ..clear()
+        ..addAll(shuffled);
+    }
     await onPlay(ordered);
   }
 }
@@ -1321,7 +1329,9 @@ class _FolderBrowserScreenState extends ConsumerState<FolderBrowserScreen> {
     );
     final playlist = _buildPlaylist(songs, subfolders);
     if (playlist.isEmpty) return;
-    final shuffled = List<Song>.from(playlist)..shuffle(Random());
+    final shuffled = ref.read(playerServiceProvider).shuffleForPlayback(
+      playlist, (song) => song.id,
+    );
     await ref
         .read(playerProvider.notifier)
         .play(shuffled.first, playlist: shuffled, context: _folderContext);

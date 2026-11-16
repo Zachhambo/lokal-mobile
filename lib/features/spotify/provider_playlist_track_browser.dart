@@ -1,3 +1,4 @@
+import 'package:flick/providers/player_provider.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -311,7 +312,15 @@ class _ProviderPlaylistTrackBrowserState
   void _play(List<int> visible, {int start = 0, bool shuffle = false}) {
     if (visible.isEmpty) return;
     final queueIndices = List<int>.of(visible);
-    if (shuffle) queueIndices.shuffle();
+    if (shuffle) {
+      final library = KonnektedLibraryIndex.of(
+        ref.read(konnektedLibraryProvider).value ?? const <Song>[],
+      );
+      final shuffled = ref.read(playerServiceProvider).shuffleForPlayback(
+        queueIndices, (index) => library.match(widget.tracks[index])?.id ?? '',
+      );
+      queueIndices..clear()..addAll(shuffled);
+    }
     widget.onPlay(queueIndices, shuffle ? 0 : start);
   }
 
