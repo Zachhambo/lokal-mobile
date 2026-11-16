@@ -1,5 +1,6 @@
 import Flutter
 import UIKit
+import UserNotifications
 
 @_silgen_name("lokal_soulseek_suspend") private func suspendSoulseek()
 @_silgen_name("lokal_soulseek_resume") private func resumeSoulseek()
@@ -25,6 +26,8 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["lokal.downloads"])
+    UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["lokal.downloads"])
     transferHost.start()
     #if DEBUG
     do { daemonProbe = try LokalTransferDaemonProbe(); daemonProbe?.start() }
@@ -77,7 +80,47 @@ import UIKit
     transferIntegrationHarness = LokalTransferIntegrationHarness(
       messenger: engineBridge.applicationRegistrar.messenger())
     #endif
+    registerDownloadNotifications(engineBridge.applicationRegistrar.messenger())
     lokalPlatform?.openDocuments(pendingDocuments)
     pendingDocuments = []
+  }
+  private func registerDownloadNotifications(_ messenger: FlutterBinaryMessenger) {
+    FlutterMethodChannel(name: "lokal/library_sync_notification", binaryMessenger: messenger)
+      .setMethodCallHandler { call, result in
+        guard call.method == "update",
+              let args = call.arguments as? [String: Any],
+              args["kind"] as? String == "download" else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        let center = UNUserNotificationCenter.current()
+        let publish: () -> Void = {
+          let content = UNMutableNotificationContent()
+          content.title = args["title"] as? String ?? "Downloads"
+          content.body = args["message"] as? String ?? ""
+          content.threadIdentifier = "lokal.downloads"
+          // Replace the progress notice silently instead of stacking alerts.
+          content.sound = nil
+          let request = UNNotificationRequest(identifier: "lokal.downloads",
+            content: content, trigger: nil)
+          center.add(request) { error in
+            DispatchQueue.main.async { result(error == nil) }
+          }
+        }
+        center.getNotificationSettings { settings in
+          if settings.authorizationStatus == .notDetermined,
+             args["begin"] as? Bool == true {
+            center.requestAuthorization(options: [.alert]) { granted, _ in
+              if granted { publish() }
+              else { DispatchQueue.main.async { result(false) } }
+            }
+          } else if settings.authorizationStatus == .authorized ||
+                    settings.authorizationStatus == .provisional {
+            publish()
+          } else {
+            DispatchQueue.main.async { result(false) }
+          }
+        }
+      }
   }
 }

@@ -1,3 +1,4 @@
+import 'package:flick/features/search/download_activity.dart';
 import 'dart:io';
 
 import 'package:flick/features/discovery/discovery_models.dart';
@@ -37,8 +38,17 @@ class OnlineSongSaveRegistry {
     LibraryDownloader? downloader,
   }) {
     final existing = _inFlight[song.id];
-    if (existing != null) return existing;
-    final task = _save(song, downloader ?? LibraryDownloader());
+    if (existing != null) {
+      return existing.then((result) {
+        DownloadActivity.instance.saved(result.path);
+        return result;
+      });
+    }
+    final task = DownloadActivity.instance.run(
+      title: song.title,
+      artist: song.artist,
+      task: () => _save(song, downloader ?? LibraryDownloader()),
+    );
     _inFlight[song.id] = task;
     return task.whenComplete(() { _inFlight.remove(song.id); });
   }

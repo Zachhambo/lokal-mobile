@@ -1,3 +1,4 @@
+import 'package:flick/features/search/download_activity.dart';
 import 'dart:async';
 
 import 'package:flick/services/link/link_download_outbox.dart';
@@ -228,7 +229,19 @@ class LibraryDownloader {
       p.equals(child, parent) || p.isWithin(parent, child);
 
   /// Copies [prepared] into the library. [artwork] is the cover to give it.
-  Future<LibraryDownloadResult> save(Song prepared, {String? artwork}) async {
+  Future<LibraryDownloadResult> save(Song prepared, {String? artwork}) =>
+      DownloadActivity.instance.run(
+        title: prepared.title,
+        artist: prepared.artist,
+        task: () async {
+          DownloadActivity.instance.status('Saving');
+          final result = await _save(prepared, artwork: artwork);
+          DownloadActivity.instance.saved(result.path);
+          return result;
+        },
+      );
+
+  Future<LibraryDownloadResult> _save(Song prepared, {String? artwork}) async {
     if (prepared.atmosEncoded) {
       AtmosDiagnostics.record('library_save_start', {
         'codec': prepared.fileType.toUpperCase() == 'AC-4' ? 'ac4' : 'eac3_joc',

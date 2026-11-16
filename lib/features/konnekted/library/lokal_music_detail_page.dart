@@ -1,3 +1,4 @@
+import 'package:flick/features/search/download_activity.dart';
 import 'package:flick/features/songs/widgets/song_actions_bottom_sheet.dart';
 import 'package:flick/features/library_jobs/artist_metadata.dart';
 
@@ -564,6 +565,7 @@ class _LokalMusicDetailPageState extends ConsumerState<LokalMusicDetailPage> {
       entry.track,
       cancel: _cancel.future,
       onStatus: (text) {
+        DownloadActivity.instance.status(text);
         if (mounted) _progress.update(text);
       },
     );
@@ -633,13 +635,19 @@ class _LokalMusicDetailPageState extends ConsumerState<LokalMusicDetailPage> {
             args: {'title': row.track.metadata.title},
           ),
         );
-        final song = await _prepare(row);
-        if (!mounted) break;
-        await LibraryDownloader().save(
-          song,
-          artwork: row.track.metadata.artworkUrl.isEmpty
-              ? null
-              : row.track.metadata.artworkUrl,
+        await DownloadActivity.instance.run(
+          title: row.track.metadata.title,
+          artist: row.track.metadata.artist,
+          task: () async {
+            final song = await _prepare(row);
+            if (!mounted) throw StateError('Download interrupted.');
+            await LibraryDownloader().save(
+              song,
+              artwork: row.track.metadata.artworkUrl.isEmpty
+                  ? null
+                  : row.track.metadata.artworkUrl,
+            );
+          },
         );
         saved++;
         ref.invalidate(songsProvider);

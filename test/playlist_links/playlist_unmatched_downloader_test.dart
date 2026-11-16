@@ -1,3 +1,4 @@
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flick/features/discovery/discovery_models.dart';
 import 'package:flick/features/konnekted/konnekted_discovery.dart';
 import 'package:flick/features/playlist_links/playlist_link_models.dart';
@@ -18,6 +19,8 @@ const _spotify = ParsedPlaylistLink(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   test('unmatched regular YouTube entry retains the source video identity', () {
     const entry = RemotePlaylistEntry(
       title: 'Original video', artist: 'Uploader',

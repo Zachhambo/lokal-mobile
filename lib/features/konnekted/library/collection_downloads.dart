@@ -1,3 +1,4 @@
+import 'package:flick/features/search/download_activity.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -168,11 +169,24 @@ class CollectionDownloader {
           skipped++;
         } else {
           report('Downloading ${song.title}…');
-          final local = await download(
-            song,
-            cancel: cancel,
-            cancelled: cancelled,
-            onStatus: report,
+          final local = await DownloadActivity.instance.run(
+            title: song.title,
+            artist: song.artist,
+            task: () async {
+              final local = await download(
+                song,
+                cancel: cancel,
+                cancelled: cancelled,
+                onStatus: (message) {
+                  DownloadActivity.instance.status(message);
+                  report(message);
+                },
+              );
+              if (local.filePath case final String path when path.isNotEmpty) {
+                DownloadActivity.instance.saved(path);
+              }
+              return local;
+            },
           );
           // An original desktop transfer may complete after Stop was pressed.
           // Count and retain that finished file, then stop before the next song.

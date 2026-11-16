@@ -27,8 +27,9 @@ object LokalLibrarySyncNotification {
                 return@setMethodCallHandler
             }
             val libraryJob = call.argument<String>("kind") == "library_job"
-            val channel = if (libraryJob) "lokal_library_jobs" else CHANNEL
-            val notificationId = if (libraryJob) 1043 else ID
+            val download = call.argument<String>("kind") == "download"
+            val channel = if (download) "lokal_downloads" else if (libraryJob) "lokal_library_jobs" else CHANNEL
+            val notificationId = if (download) 1044 else if (libraryJob) 1043 else ID
             val manager = NotificationManagerCompat.from(context)
             if (!manager.areNotificationsEnabled() || (Build.VERSION.SDK_INT >= 33 &&
                     ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)) {
@@ -41,11 +42,11 @@ object LokalLibrarySyncNotification {
                 return@setMethodCallHandler
             }
             channels.createNotificationChannel(NotificationChannel(
-                channel, WidgetPrefs.localizedText(context, if (libraryJob)
+                channel, if (download) "Downloads" else WidgetPrefs.localizedText(context, if (libraryJob)
                     R.string.native_library_jobs_channel else R.string.native_library_sync_channel),
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = WidgetPrefs.localizedText(context, if (libraryJob)
+                description = if (download) "Music download progress and results" else WidgetPrefs.localizedText(context, if (libraryJob)
                     R.string.native_library_jobs_description else R.string.native_library_sync_description)
                 setShowBadge(false)
                 setSound(null, null)

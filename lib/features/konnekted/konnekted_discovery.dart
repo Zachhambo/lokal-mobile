@@ -1,3 +1,4 @@
+import 'package:flick/features/search/download_activity.dart';
 import 'package:flick/features/morneye/morneye_session.dart';
 import 'package:flick/core/utils/online_source_log_label.dart';
 import 'package:flick/core/utils/artist_credits.dart';
@@ -1702,7 +1703,17 @@ Future<List<OnlineSource>> _playbackSources(
             for (final track in await YoutubeMusicCatalog(web).search(query))
               OnlineResult(track, artwork: track.artwork),
           ],
-          play: (found) => youtube.prepare(found, cache(), cancel: cancel),
+          play: (found) => youtube.prepare(
+            found, cache(), cancel: cancel,
+            onProgress: forDownload || DownloadActivity.instance.current != null
+                ? (received, total) {
+              final text = total != null && total > 0
+                  ? 'Downloading from YouTube Music… ${(received * 100 / total).clamp(0, 100).round()}%'
+                  : 'Downloading from YouTube Music…';
+              DownloadActivity.instance.status(text);
+              onStatus?.call(text);
+            } : null,
+          ),
         ),
       if (!httpOnly &&
           (selectedSourceId == null || selectedSourceId == 'mono') &&
@@ -2080,6 +2091,11 @@ Future<Song> playOnlineTrack(
   bool forDownload = false,
   String? downloadQuality,
 }) async {
+  final reportStatus = onStatus;
+  onStatus = (message) {
+    DownloadActivity.instance.status(message);
+    reportStatus?.call(message);
+  };
   var settings = const DiscoverySettings();
   // The chosen native YouTube or Morneye source has no dependency on HTTP
   // addon settings. Avoid storage I/O on the time-critical playback path.
@@ -2480,6 +2496,14 @@ Future<Song?> findDiscoverySong(
             direct,
             _playbackCache(web, additionalProtectedPaths),
             cancel: cancel,
+            onProgress: DownloadActivity.instance.current != null
+                ? (received, total) {
+              final text = total != null && total > 0
+                  ? 'Downloading from YouTube Music… ${(received * 100 / total).clamp(0, 100).round()}%'
+                  : 'Downloading from YouTube Music…';
+              DownloadActivity.instance.status(text);
+              onStatus?.call(text);
+            } : null,
           );
           final song = resolved.copyWith(sourceDisplayName: 'YouTube Music');
           OnlineSongSaveRegistry.instance.register(

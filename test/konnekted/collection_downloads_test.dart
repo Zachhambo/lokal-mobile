@@ -1,3 +1,4 @@
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 
 import 'package:flick/features/konnekted/library/collection_downloads.dart';
@@ -30,6 +31,8 @@ Song song(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   test(
     'only real library files count; playback caches and absent files do not',
     () async {

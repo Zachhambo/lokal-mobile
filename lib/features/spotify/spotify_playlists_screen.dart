@@ -159,7 +159,7 @@ class _SpotifyPlaylistsScreenState
         _showHidden || !_hidden.contains(p.id)).toList();
     return Scaffold(
     appBar: AppBar(
-      title: const Text('Spotify playlists'),
+      title: const Text('Spotify'),
       actions: [
         IconButton(
           tooltip: 'Refresh Spotify playlists',
