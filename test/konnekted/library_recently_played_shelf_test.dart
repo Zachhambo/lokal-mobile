@@ -188,6 +188,8 @@ void main() {
       ])),
     ]);
     addTearDown(container.dispose);
+    final subscription = container.listen(downloadActivityProvider, (_, _) {});
+    addTearDown(subscription.close);
     await container.read(downloadActivityProvider.future);
     expect(container.read(lokalDownloadsProvider).value, [downloaded, legacy]);
   });
