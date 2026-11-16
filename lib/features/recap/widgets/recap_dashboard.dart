@@ -48,12 +48,16 @@ class RecapDashboard extends ConsumerStatefulWidget {
   const RecapDashboard({
     super.key,
     required this.recap,
+    required this.view,
+    required this.onViewChanged,
     required this.failed,
     required this.onRetry,
     required this.onExport,
   });
 
   final ListeningRecap recap;
+  final RecapView view;
+  final ValueChanged<RecapView> onViewChanged;
   final bool failed;
   final VoidCallback onRetry;
   final VoidCallback onExport;
@@ -63,8 +67,16 @@ class RecapDashboard extends ConsumerStatefulWidget {
 }
 
 class _RecapDashboardState extends ConsumerState<RecapDashboard> {
-  RecapView _view = RecapView.overview;
+  RecapView get _view => widget.view;
   final _scroll = ScrollController();
+
+  @override
+  void didUpdateWidget(covariant RecapDashboard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.recap.period != widget.recap.period && _scroll.hasClients) {
+      _scroll.jumpTo(0);
+    }
+  }
 
   @override
   void dispose() {
@@ -75,7 +87,7 @@ class _RecapDashboardState extends ConsumerState<RecapDashboard> {
   void _select(RecapView value) {
     if (_view == value) return;
     if (_scroll.hasClients) _scroll.jumpTo(0);
-    setState(() => _view = value);
+    widget.onViewChanged(value);
   }
 
   List<Song> get _songs => buildRecapMix(widget.recap, RecapMix.favorites);

@@ -4,6 +4,8 @@ import 'dart:ui' as ui;
 
 import 'package:flick/core/constants/app_constants.dart';
 import 'package:flick/core/theme/app_theme.dart';
+import 'package:flick/core/navigation/lokal_page_motion.dart';
+import 'package:flick/core/theme/lokal_tokens.dart';
 import 'package:flick/data/repositories/recently_played_repository.dart';
 import 'package:flick/features/recap/screens/listening_recap_screen.dart';
 import 'package:flick/features/recap/screens/replay_studio_screen.dart';
@@ -182,6 +184,7 @@ Future<void> _pump(
   double textScale = 1,
   bool reducedMotion = true,
   bool floatingNav = false,
+  bool enterViaRoute = false,
 }) async {
   SharedPreferences.setMockInitialValues({});
   tester.view.devicePixelRatio = 1;
@@ -191,7 +194,13 @@ Future<void> _pump(
   await tester.pumpWidget(
     ProviderScope(
       child: MaterialApp(
-        theme: AppTheme.darkTheme,
+        theme: enterViaRoute
+            ? AppTheme.darkTheme.copyWith(pageTransitionsTheme:
+                const PageTransitionsTheme(builders: {
+                  TargetPlatform.android: LokalPageMotion(),
+                  TargetPlatform.iOS: LokalPageMotion(),
+                }))
+            : AppTheme.darkTheme,
         builder: (context, child) {
           final media = MediaQuery.of(context).copyWith(
             textScaler: TextScaler.linear(textScale),
@@ -268,7 +277,14 @@ Future<void> _pump(
             ),
           );
         },
-        home: ListeningRecapScreen(repository: repository),
+        home: enterViaRoute
+            ? Scaffold(backgroundColor: const Color(0xFFCA1234),
+                body: Builder(builder: (context) => TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    LokalPageRoute<void>(builder: (_) =>
+                      ListeningRecapScreen(repository: repository))),
+                  child: const Text('Open recap'))))
+            : ListeningRecapScreen(repository: repository),
       ),
     ),
   );
@@ -413,6 +429,108 @@ void main() {
     expect(playlists.single.songIds, songs.map((s) => s.id).toList());
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
+  });
+
+
+  testWidgets('period changes keep every selected section without overlapping dashboards', (tester) async {
+    final repository = _Repository(_all());
+    addTearDown(repository.changes.close);
+    await _pump(tester, repository, reducedMotion: false);
+    for (final view in RecapView.values) {
+      final tab = find.byKey(ValueKey('recap-tab-${view.name}'));
+      await tester.ensureVisible(tab);
+      await tester.tap(tab);
+      await tester.pumpAndSettle();
+      final state = tester.state(find.byType(RecapDashboard));
+      final tabPosition = tester.getTopLeft(tab);
+      for (final (label, period) in [
+        ('Weekly', ListeningRecapPeriod.weekly),
+        ('Yearly', ListeningRecapPeriod.yearly),
+        ('Daily', ListeningRecapPeriod.daily),
+        ('Monthly', ListeningRecapPeriod.monthly),
+      ]) {
+        await tester.tap(find.text(label));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 25));
+        expect(find.byType(RecapDashboard), findsOneWidget);
+        expect(tester.state(find.byType(RecapDashboard)), same(state));
+        final dashboard = tester.widget<RecapDashboard>(find.byType(RecapDashboard));
+        expect(dashboard.view, view);
+        expect(dashboard.recap.period, period);
+        expect(tester.widget<ChoiceChip>(tab).selected, isTrue);
+        expect(tester.getTopLeft(tab), tabPosition);
+        expect(find.ancestor(of: find.byType(RecapDashboard),
+          matching: find.byType(AnimatedSwitcher)), findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pumpAndSettle();
+      }
+    }
+  });
+
+  testWidgets('an empty period and history refresh do not forget Albums', (tester) async {
+    final data = _all();
+    data[ListeningRecapPeriod.daily] = ListeningRecap.empty(
+      ListeningRecapPeriod.daily,
+      ListeningRecapPeriod.daily.rangeFor(DateTime(2026, 11, 17)));
+    final repository = _Repository(data);
+    addTearDown(repository.changes.close);
+    await _pump(tester, repository);
+    await tester.tap(find.text('Weekly'));
+    await tester.pumpAndSettle();
+    final albums = find.byKey(const ValueKey('recap-tab-albums'));
+    await tester.ensureVisible(albums);
+    await tester.tap(albums);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Daily'));
+    await tester.pumpAndSettle();
+    expect(find.byType(RecapDashboard), findsNothing);
+    await tester.tap(find.text('Yearly'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<ChoiceChip>(albums).selected, isTrue);
+    repository.changes.add(null);
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pumpAndSettle();
+    expect(tester.widget<RecapDashboard>(find.byType(RecapDashboard)).view,
+      RecapView.albums);
+    expect(tester.takeException(), isNull);
+  });
+
+
+  testWidgets('recap content paints its backdrop during route push and pop', (tester) async {
+    final repository = _Repository(_all());
+    addTearDown(repository.changes.close);
+    await _pump(tester, repository, reducedMotion: false, enterViaRoute: true);
+    await tester.tap(find.text('Open recap'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+    Future<void> expectOpaqueContent() async {
+      final screen = find.byType(ListeningRecapScreen);
+      final surface = find.descendant(of: screen, matching: find.byType(ColoredBox)).first;
+      final color = LokalTokens.of(tester.element(screen)).bg;
+      final sample = tester.getTopLeft(surface) + const Offset(2, 2);
+      final boundary = _screenKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      await tester.runAsync(() async {
+        final frame = await boundary.toImage();
+        try {
+          final pixels = await frame.toByteData(format: ui.ImageByteFormat.rawRgba);
+          final offset = (sample.dy.floor() * frame.width + sample.dx.floor()) * 4;
+          expect(pixels!.getUint8(offset), (color.r * 255).round());
+          expect(pixels.getUint8(offset + 1), (color.g * 255).round());
+          expect(pixels.getUint8(offset + 2), (color.b * 255).round());
+        } finally {
+          frame.dispose();
+        }
+      });
+    }
+    await expectOpaqueContent();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Back'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+    await expectOpaqueContent();
+    await tester.pumpAndSettle();
+    expect(find.text('Open recap'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('living card overview and frozen studio snapshot', (
