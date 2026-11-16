@@ -1,6 +1,7 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -15,9 +16,10 @@ class PlayerVolumeControl extends ChangeNotifier with WidgetsBindingObserver {
   PlayerVolumeControl(this.player) {
     WidgetsBinding.instance.addObserver(this);
     player.audioOutputDiagnosticsNotifier.addListener(_changed);
+    player.extendedVolumeEnabledNotifier.addListener(_changed);
     CastingService.instance.remoteVolumeNotifier.addListener(_changed);
     Uac2Service.instance.addStatusListener(_routeChanged);
-    if (Platform.isAndroid) {
+    if (_isAndroid) {
       _subscription = _events.listen((value) {
         if (_disposed) return;
         _systemVolume = (value as num).toDouble();
@@ -35,16 +37,20 @@ class PlayerVolumeControl extends ChangeNotifier with WidgetsBindingObserver {
   double? _systemVolume;
   bool _disposed = false;
 
+  bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
+
   bool get usesSystemVolume =>
-      Platform.isAndroid &&
+      _isAndroid &&
       !player.isCasting &&
       player.currentEngineType != AudioEngineType.usbDacExperimental &&
       player.currentEngineType != AudioEngineType.dapInternalHighRes;
   bool get available =>
-      usesSystemVolume ? _systemVolume != null : player.isVolumeAvailable;
-  double get max => usesSystemVolume ? 1 : player.maxVolume;
+      player.isVolumeAvailable && (!usesSystemVolume || _systemVolume != null);
+  double get max => player.maxVolume;
   double get value =>
-      (usesSystemVolume ? (_systemVolume ?? 0) : player.currentVolume)
+      (usesSystemVolume
+              ? (_systemVolume ?? 0) * math.max(1.0, player.currentVolume)
+              : player.currentVolume)
           .clamp(0.0, max)
           .toDouble();
 
@@ -68,14 +74,20 @@ class PlayerVolumeControl extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> set(double volume) async {
+    if (!volume.isFinite || !available) return;
     if (!usesSystemVolume) {
       await player.setVolume(volume);
       _changed();
       return;
     }
     try {
+      // 0–100 % remains Android media volume. Above that, keep Android at
+      // unity and apply the extra gain through the active playback engine.
+      // Reset engine gain below 100 % so lowering the slider removes boost.
+      final target = volume.clamp(0.0, max).toDouble();
+      await player.setVolume(math.max(1.0, target));
       final applied = await _channel.invokeMethod<num>('set', {
-        'volume': volume,
+        'volume': math.min(1.0, target),
       });
       if (_disposed || applied == null) return;
       _systemVolume = applied.toDouble();
@@ -89,7 +101,7 @@ class PlayerVolumeControl extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && Platform.isAndroid) {
+    if (state == AppLifecycleState.resumed && _isAndroid) {
       unawaited(refresh());
     }
   }
@@ -99,6 +111,7 @@ class PlayerVolumeControl extends ChangeNotifier with WidgetsBindingObserver {
     _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
     player.audioOutputDiagnosticsNotifier.removeListener(_changed);
+    player.extendedVolumeEnabledNotifier.removeListener(_changed);
     CastingService.instance.remoteVolumeNotifier.removeListener(_changed);
     Uac2Service.instance.removeStatusListener(_routeChanged);
     unawaited(_subscription?.cancel());
