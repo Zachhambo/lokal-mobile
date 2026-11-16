@@ -41,7 +41,7 @@ class _ListeningRecapScreenState extends ConsumerState<ListeningRecapScreen>
   StreamSubscription<void>? _history;
   Timer? _refreshDebounce;
   int _loadGeneration = 0;
-  int _direction = 1;
+  RecapView _view = RecapView.overview;
   bool _loading = true;
   bool _failed = false;
   bool _active = true;
@@ -113,7 +113,6 @@ class _ListeningRecapScreenState extends ConsumerState<ListeningRecapScreen>
   void _selectPeriod(ListeningRecapPeriod period) {
     if (_period == period) return;
     setState(() {
-      _direction = period.index > _period.index ? 1 : -1;
       _period = period;
     });
   }
@@ -182,16 +181,30 @@ class _ListeningRecapScreenState extends ConsumerState<ListeningRecapScreen>
             backgroundColor: Colors.transparent,
             body: SafeArea(
               bottom: false,
-              child: Column(
-                children: [
-                  _header(),
-                  ReplayPeriodPicker(
-                    selected: _period,
-                    onSelected: _selectPeriod,
-                  ),
-                  const SizedBox(height: 4),
-                  Expanded(child: Builder(builder: _body)),
-                ],
+              child: Padding(
+                // Paint the route's content while keeping the shell dock's
+                // reserved inset transparent for its own backdrop.
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.paddingOf(context).bottom,
+                ),
+                child: ColoredBox(
+                  color: context.lokal.bg,
+                  child: Builder(builder: (contentContext) => MediaQuery.removePadding(
+                    context: contentContext,
+                    removeBottom: true,
+                    child: Column(
+                      children: [
+                        _header(),
+                        ReplayPeriodPicker(
+                          selected: _period,
+                          onSelected: _selectPeriod,
+                        ),
+                        const SizedBox(height: 4),
+                        Expanded(child: Builder(builder: _body)),
+                      ],
+                    ),
+                  )),
+                ),
               ),
             ),
           ),
@@ -262,48 +275,21 @@ class _ListeningRecapScreenState extends ConsumerState<ListeningRecapScreen>
         ),
       );
     }
-    return AnimatedSwitcher(
-      duration: ReplayStyle.duration(context),
-      reverseDuration: ReplayStyle.duration(context),
-      layoutBuilder: (current, previous) => Stack(
-        fit: StackFit.expand,
-        alignment: Alignment.topCenter,
-        children: [
-          ...previous.map(
-            (child) => ExcludeSemantics(child: IgnorePointer(child: child)),
-          ),
-          ?current,
-        ],
-      ),
-      transitionBuilder: (child, animation) => FadeTransition(
-        opacity: animation,
-        child: SlideTransition(
-          position:
-              Tween(
-                begin: Offset(0.035 * _direction, 0),
-                end: Offset.zero,
-              ).animate(
-                CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
-              ),
-          child: child,
-        ),
-      ),
-      child: _recap.hasData
-          ? RecapDashboard(
-              key: ValueKey(_period),
-              recap: _recap,
-              failed: _failed,
-              onRetry: () => _loadRecaps(refresh: true),
-              onExport: _openExport,
-            )
-          : KeyedSubtree(
-              key: ValueKey(_period),
-              child: _message(
-                title: l10n.yourNextFavoriteNisWaiting,
-                detail: _period.emptyMessage,
-              ),
-            ),
-    );
+    // Period updates stay in place: overlapping slide/fade copies used to
+    // move the section tabs and recreate their selected state.
+    return _recap.hasData
+        ? RecapDashboard(
+            recap: _recap,
+            view: _view,
+            onViewChanged: (view) => setState(() => _view = view),
+            failed: _failed,
+            onRetry: () => _loadRecaps(refresh: true),
+            onExport: _openExport,
+          )
+        : _message(
+            title: l10n.yourNextFavoriteNisWaiting,
+            detail: _period.emptyMessage,
+          );
   }
 
   Widget _message({

@@ -17,6 +17,7 @@ import 'package:flick/providers/lokal_remote_provider.dart';
 import 'package:flick/widgets/common/overflow_marquee_title.dart';
 import 'package:flick/core/theme/lokal_theme.dart';
 import 'package:flick/core/navigation/lokal_navigation_switcher.dart';
+import 'package:flick/core/navigation/lokal_page_motion.dart';
 import 'package:flick/core/constants/app_constants.dart';
 import 'package:flick/core/theme/lokal_tokens.dart';
 import 'package:flick/data/repositories/recently_played_repository.dart';
@@ -247,8 +248,13 @@ class _KonnektedYouState extends ConsumerState<KonnektedYou> {
     Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page)),
   );
 
-  void _openRecap(ListeningRecapPeriod period) =>
-      _push(ListeningRecapScreen(initialPeriod: period));
+  void _openRecap(ListeningRecapPeriod period) => unawaited(
+    Navigator.of(context).push(
+      LokalPageRoute<void>(
+        builder: (_) => ListeningRecapScreen(initialPeriod: period),
+      ),
+    ),
+  );
 
   Future<void> _editProfile() async {
     try {
