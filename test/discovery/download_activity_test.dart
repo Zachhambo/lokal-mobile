@@ -115,4 +115,48 @@ void main() {
     expect(activity.entries, hasLength(1));
     expect(activity.entries.single.state, 'Completed');
   });
+
+  test('saved destinations outlive activity history trimming and restart', () async {
+    SharedPreferences.setMockInitialValues({
+      DownloadActivity.storageKey: [
+        for (var i = 0; i < DownloadActivity.historyLimit + 2; i++)
+          jsonEncode({
+            'id': 'job-$i', 'title': 'Track $i', 'artist': 'Artist',
+            'started': DateTime(2020).add(Duration(seconds: i)).toIso8601String(),
+            'state': 'Completed', 'path': '/chosen/track-$i.flac',
+          }),
+      ],
+    });
+    final activity = DownloadActivity();
+    await activity.load();
+    expect(activity.entries, hasLength(DownloadActivity.historyLimit));
+    expect(activity.entries.any((entry) => entry.path == '/chosen/track-0.flac'), isFalse);
+    expect(activity.savedPaths.value, contains('/chosen/track-0.flac'));
+    await activity.run(title: 'New', artist: 'Artist', task: () async {});
+    await activity.flushed;
+    final restored = DownloadActivity();
+    await restored.load();
+    expect(restored.savedPaths.value, contains('/chosen/track-0.flac'));
+  });
+
+  test('explicit peer requeue preserves previous completion and shows new progress', () async {
+    final activity = DownloadActivity();
+    await activity.run(
+      id: 'peer', title: 'Track', artist: 'Artist',
+      task: () async => activity.saved('/music/track.flac'),
+    );
+    await activity.transfer(
+      id: 'peer', title: 'Track', artist: 'Soulseek',
+      state: 'Queued', progress: 0, newAttempt: true,
+    );
+    await activity.transfer(
+      id: 'peer', title: 'Track', artist: 'Soulseek',
+      state: 'Downloading', progress: .3,
+    );
+    expect(activity.entries, hasLength(2));
+    expect(activity.entries.first.progress, .3);
+    expect(activity.entries.first.active, isTrue);
+    expect(activity.entries.last.state, 'Completed');
+    expect(activity.entries.last.path, '/music/track.flac');
+  });
 }

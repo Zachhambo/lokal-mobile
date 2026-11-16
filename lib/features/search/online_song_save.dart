@@ -38,7 +38,12 @@ class OnlineSongSaveRegistry {
     LibraryDownloader? downloader,
   }) {
     final existing = _inFlight[song.id];
-    if (existing != null) return existing;
+    if (existing != null) {
+      return existing.then((result) {
+        DownloadActivity.instance.saved(result.path);
+        return result;
+      });
+    }
     final task = DownloadActivity.instance.run(
       title: song.title,
       artist: song.artist,

@@ -454,6 +454,7 @@ class _KonnektedDiscoveryViewState
           final found = await widget.findSong(
             track,
             onStatus: (text) {
+              DownloadActivity.instance.status(text);
               if (mounted) _progress.update(text);
             },
           );

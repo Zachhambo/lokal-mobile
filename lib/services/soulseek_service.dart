@@ -644,7 +644,7 @@ class SoulseekService extends ChangeNotifier with WidgetsBindingObserver {
     await _savePending();
     await DownloadActivity.instance.transfer(
       id: _activityId(file), title: file.name, artist: 'Soulseek',
-      state: 'Queued', progress: 0,
+      state: 'Queued', progress: 0, newAttempt: true,
     );
     await refresh();
   }

@@ -565,6 +565,7 @@ class _LokalMusicDetailPageState extends ConsumerState<LokalMusicDetailPage> {
       entry.track,
       cancel: _cancel.future,
       onStatus: (text) {
+        DownloadActivity.instance.status(text);
         if (mounted) _progress.update(text);
       },
     );

@@ -18,7 +18,8 @@ class DownloadActivityEntry {
     this.path,
   });
 
-  final String id, title, artist;
+  String id;
+  final String title, artist;
   final DateTime started;
   String state;
   double? progress;
@@ -54,6 +55,9 @@ class DownloadActivity extends ChangeNotifier {
   static final _zoneKey = Object();
   static const storageKey = 'lokal.download_activity.v1';
   static const historyLimit = 1000;
+  static const savedPathsKey = 'lokal.downloaded_paths.v1';
+  final _savedPaths = ValueNotifier<Set<String>>(const {});
+  ValueListenable<Set<String>> get savedPaths => _savedPaths;
   final _entries = <DownloadActivityEntry>[];
   Future<void>? _loading;
   Future<void> _writes = Future.value();
@@ -75,6 +79,12 @@ class DownloadActivity extends ChangeNotifier {
           if (!_entries.any((item) => item.id == entry.id)) _entries.add(entry);
         } catch (_) { /* A damaged row must not hide the other downloads. */ }
       }
+      _savedPaths.value = {
+        ..._savedPaths.value,
+        ...?prefs.getStringList(savedPathsKey),
+        for (final entry in _entries)
+          if (entry.path != null) entry.path!,
+      };
       _entries.sort((a, b) => b.started.compareTo(a.started));
       _trim();
       notifyListeners();
@@ -89,10 +99,12 @@ class DownloadActivity extends ChangeNotifier {
   void _persist() {
     _trim();
     final rows = _entries.map((entry) => jsonEncode(entry.toJson())).toList();
+    final paths = _savedPaths.value.toList();
     _writes = _writes.then((_) async {
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setStringList(storageKey, rows);
+        await prefs.setStringList(savedPathsKey, paths);
       } catch (_) { /* Keep live progress usable if storage is unavailable. */ }
     });
   }
@@ -144,9 +156,16 @@ class DownloadActivity extends ChangeNotifier {
     required String artist,
     required String state,
     required double progress,
+    bool newAttempt = false,
   }) async {
     await load();
     var entry = _entries.where((row) => row.id == id).firstOrNull;
+    if (newAttempt && entry != null) {
+      // Preserve the previous outcome while reserving the stable peer key
+      // for the explicitly requested new transfer.
+      entry.id = '$id:attempt:${DateTime.now().microsecondsSinceEpoch}:${_sequence++}';
+      entry = null;
+    }
     if (entry?.state == 'Completed') return;
     final changed = entry == null || entry.state != state;
     if (entry == null) {
@@ -203,11 +222,15 @@ class DownloadActivity extends ChangeNotifier {
   @override
   void dispose() {
     _notifications.dispose();
+    _savedPaths.dispose();
     super.dispose();
   }
 
   void saved(String path) {
     final entry = current;
     if (entry != null) entry.path = path;
+    if (!_savedPaths.value.contains(path)) {
+      _savedPaths.value = {..._savedPaths.value, path};
+    }
   }
 }

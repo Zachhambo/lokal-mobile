@@ -753,6 +753,13 @@ void main() {
     await tester.longPress(find.text('Song A'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Download to library'));
+    final failure = find.text('Couldn’t save Song A. Not available here.');
+    for (var i = 0; i < 200 && failure.evaluate().isEmpty; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+    }
     await tester.pumpAndSettle();
     expect(
       find.text('Couldn’t save Song A. Not available here.'),

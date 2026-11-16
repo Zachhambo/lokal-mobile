@@ -180,6 +180,7 @@ void main() {
     final other = _song('other').copyWith(filePath: '/chosen/other.flac');
     final container = ProviderContainer(overrides: [
       konnektedLibraryProvider.overrideWithValue(AsyncData([downloaded, legacy, other])),
+      downloadedPathsProvider.overrideWith((ref) => Stream.value(<String>{})),
       downloadActivityProvider.overrideWith((ref) => Stream.value([
         DownloadActivityEntry(
           id: 'saved', title: downloaded.title, artist: downloaded.artist,

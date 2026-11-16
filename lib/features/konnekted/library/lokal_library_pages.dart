@@ -1,3 +1,4 @@
+import 'package:flick/providers/songs_provider.dart';
 import 'package:flick/core/theme/lokal_tokens.dart';
 import 'package:flick/features/search/download_activity.dart';
 import 'package:flick/l10n/l10n.dart';
@@ -32,14 +33,34 @@ final downloadActivityProvider = StreamProvider<List<DownloadActivityEntry>>((re
   return events.stream;
 });
 
+/// Saved files outlive the bounded activity history. This stream changes only
+/// when a destination is added, not for every progress callback.
+final downloadedPathsProvider = StreamProvider<Set<String>>((ref) {
+  final activity = DownloadActivity.instance;
+  final events = StreamController<Set<String>>();
+  void emit() => events.add(activity.savedPaths.value);
+  activity.savedPaths.addListener(emit);
+  emit();
+  unawaited(activity.load());
+  ref.onDispose(() {
+    activity.savedPaths.removeListener(emit);
+    unawaited(events.close());
+  });
+  return events.stream;
+});
+
 /// Exact saved destinations, plus the legacy fallback folder.
 final lokalDownloadsProvider = Provider<AsyncValue<List<Song>>>((ref) {
-  final savedPaths = ref.watch(downloadActivityProvider.select(
+  final recordedPaths = ref.watch(downloadActivityProvider.select(
     (value) => value.value
         ?.where((entry) => entry.path != null)
         .map((entry) => entry.path!)
         .join('\n') ?? '',
   )).split('\n').where((path) => path.isNotEmpty).toSet();
+  final savedPaths = {
+    ...recordedPaths,
+    ...?ref.watch(downloadedPathsProvider).value,
+  };
   final folder = RegExp(
     '[/\\\\]${RegExp.escape(LibraryDownloader.folderName)}[/\\\\]',
   );
@@ -185,7 +206,7 @@ class _LokalDownloadsPageState extends ConsumerState<LokalDownloadsPage> {
               title: lokalText('Couldn’t load these songs'),
               message: lokalText('Try again in a moment.'),
               actionLabel: 'Try again',
-              onAction: () => ref.invalidate(konnektedLibraryProvider),
+              onAction: () => ref.invalidate(songsProvider),
             ),
           )
         else if (_songs)

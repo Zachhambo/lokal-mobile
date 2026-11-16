@@ -153,7 +153,9 @@ class _GlobalCatalogueSearchSectionState
             artworkUrl: match.artworkUrl,
             duration: match.duration,
           );
-          final found = await findDiscoverySong(info);
+          final found = await findDiscoverySong(
+            info, onStatus: DownloadActivity.instance.status,
+          );
           if (found == null) throw StateError('No playable source');
           if (OnlineSongSaveRegistry.instance.canSave(found)) {
             await OnlineSongSaveRegistry.instance.save(found);
