@@ -358,6 +358,9 @@ void main() {
     expect(service.saved.single.songSnapshots.keys, songs.map((s) => s.id));
     expect(find.text('Open saved playlist'), findsOneWidget);
     expect(tester.takeException(), isNull);
+    // Let the app-wide confirmation toast finish before disposing its overlay.
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
     await tester.pumpWidget(const SizedBox());
   });
 
