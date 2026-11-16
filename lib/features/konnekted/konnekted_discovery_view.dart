@@ -1,3 +1,4 @@
+import 'package:flick/features/search/download_activity.dart';
 import 'package:flick/core/utils/lokal_layout.dart';
 import 'package:flick/l10n/l10n.dart';
 
@@ -446,21 +447,27 @@ class _KonnektedDiscoveryViewState
     setState(() => _busy = key);
     _progress.update('Downloading ${track.title} to library…');
     try {
-      final found = await widget.findSong(
-        track,
-        onStatus: (text) {
-          if (mounted) _progress.update(text);
+      await DownloadActivity.instance.run(
+        title: track.title,
+        artist: track.artist,
+        task: () async {
+          final found = await widget.findSong(
+            track,
+            onStatus: (text) {
+              if (mounted) _progress.update(text);
+            },
+          );
+          if (found == null)
+            throw const DiscoveryException(
+              'No playable source was found for this track.',
+            );
+          if (OnlineSongSaveRegistry.instance.canSave(found)) {
+            await OnlineSongSaveRegistry.instance.save(found);
+          } else {
+            await LibraryDownloader().save(found, artwork: track.artworkUrl);
+          }
         },
       );
-      if (found == null)
-        throw const DiscoveryException(
-          'No playable source was found for this track.',
-        );
-      if (OnlineSongSaveRegistry.instance.canSave(found)) {
-        await OnlineSongSaveRegistry.instance.save(found);
-      } else {
-        await LibraryDownloader().save(found, artwork: track.artworkUrl);
-      }
       if (mounted) _say('Saved ${track.title} to your library');
     } catch (error) {
       if (mounted)

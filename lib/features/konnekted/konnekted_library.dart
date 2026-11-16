@@ -333,12 +333,12 @@ class _MoreRows extends StatelessWidget {
       ),
       LokalNavRow(
         icon: Icons.library_music_rounded,
-        label: lokalText('Spotify playlists'),
+        label: lokalText('Spotify'),
         onTap: () => onNavigate(KonnektedDestination.spotifyPlaylists),
       ),
       LokalNavRow(
         icon: Icons.video_library_rounded,
-        label: lokalText('YouTube Music playlists'),
+        label: lokalText('Youtube Music'),
         onTap: () => onNavigate(KonnektedDestination.youtubeMusicPlaylists),
       ),
       LokalNavRow(

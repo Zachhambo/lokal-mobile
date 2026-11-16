@@ -1,3 +1,4 @@
+import 'package:flick/features/search/download_activity.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -141,20 +142,26 @@ class _GlobalCatalogueSearchSectionState
     if (_saving) return;
     setState(() => _saving = true);
     try {
-      final info = LokalDiscoveryTrack(
+      await DownloadActivity.instance.run(
         title: match.title,
         artist: match.artist,
-        album: match.album,
-        artworkUrl: match.artworkUrl,
-        duration: match.duration,
+        task: () async {
+          final info = LokalDiscoveryTrack(
+            title: match.title,
+            artist: match.artist,
+            album: match.album,
+            artworkUrl: match.artworkUrl,
+            duration: match.duration,
+          );
+          final found = await findDiscoverySong(info);
+          if (found == null) throw StateError('No playable source');
+          if (OnlineSongSaveRegistry.instance.canSave(found)) {
+            await OnlineSongSaveRegistry.instance.save(found);
+          } else {
+            await LibraryDownloader().save(found, artwork: match.artworkUrl);
+          }
+        },
       );
-      final found = await findDiscoverySong(info);
-      if (found == null) throw StateError('No playable source');
-      if (OnlineSongSaveRegistry.instance.canSave(found)) {
-        await OnlineSongSaveRegistry.instance.save(found);
-      } else {
-        await LibraryDownloader().save(found, artwork: match.artworkUrl);
-      }
       if (mounted) LokalToast.show(context, 'Saved ${match.title} to your library.');
     } catch (_) {
       if (mounted) {

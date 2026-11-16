@@ -1,3 +1,4 @@
+import 'package:flick/features/search/download_activity.dart';
 import 'package:flick/core/theme/lokal_theme.dart';
 import 'package:flick/core/theme/lokal_tokens.dart';
 import 'package:flick/features/konnekted/konnekted_data.dart';
@@ -71,8 +72,8 @@ void main() {
         scrollable: find.byType(Scrollable).first,
       );
       expect(find.byType(LokalNavRow), findsNWidgets(8));
-      expect(find.text('Spotify playlists'), findsOneWidget);
-      expect(find.text('YouTube Music playlists'), findsOneWidget);
+      expect(find.text('Spotify'), findsOneWidget);
+      expect(find.text('Youtube Music'), findsOneWidget);
       expect(find.byIcon(Icons.history_rounded), findsNothing);
       expect(find.text('Songs'), findsOneWidget);
       expect(find.text('Downloads'), findsOneWidget);
@@ -168,4 +169,58 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  test('Downloads includes exact chosen-folder saves and legacy files only', () async {
+    final downloaded = _song('saved').copyWith(
+      filePath: '/chosen/Artist/Album/track.flac',
+    );
+    final legacy = _song('legacy').copyWith(
+      filePath: '/Music/Lokal Downloads/Artist/track.flac',
+    );
+    final other = _song('other').copyWith(filePath: '/chosen/other.flac');
+    final container = ProviderContainer(overrides: [
+      konnektedLibraryProvider.overrideWithValue(AsyncData([downloaded, legacy, other])),
+      downloadActivityProvider.overrideWith((ref) => Stream.value([
+        DownloadActivityEntry(
+          id: 'saved', title: downloaded.title, artist: downloaded.artist,
+          started: DateTime(2026), state: 'Completed', path: downloaded.filePath,
+        ),
+      ])),
+    ]);
+    addTearDown(container.dispose);
+    await container.read(downloadActivityProvider.future);
+    expect(container.read(lokalDownloadsProvider).value, [downloaded, legacy]);
+  });
+
+  testWidgets('Downloads displays live percentages and completed history', (tester) async {
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        konnektedLibraryProvider.overrideWithValue(const AsyncData(<Song>[])),
+        downloadActivityProvider.overrideWith((ref) => Stream.value([
+          DownloadActivityEntry(
+            id: 'active', title: 'Downloading track', artist: 'Artist',
+            started: DateTime(2026), progress: .42,
+          ),
+          DownloadActivityEntry(
+            id: 'complete', title: 'Saved track', artist: 'Artist',
+            started: DateTime(2026), state: 'Completed',
+            path: '/chosen/track.flac',
+          ),
+        ])),
+      ],
+      child: MaterialApp(
+        theme: LokalTheme.build(LokalTokens.resolve(LokalThemeId.dark)),
+        home: lokalLibraryPage('downloads'),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Downloading track'), findsOneWidget);
+    expect(find.textContaining('42%'), findsOneWidget);
+    expect(find.text('Saved track'), findsOneWidget);
+    expect(find.text('History'), findsOneWidget);
+    expect(tester.widget<LinearProgressIndicator>(
+      find.byType(LinearProgressIndicator),
+    ).value, .42);
+    expect(tester.takeException(), isNull);
+  });
 }

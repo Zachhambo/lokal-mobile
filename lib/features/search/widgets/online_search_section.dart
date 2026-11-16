@@ -1,3 +1,4 @@
+import 'package:flick/features/search/download_activity.dart';
 import 'package:flick/core/utils/online_source_log_label.dart';
 
 import '../providers/recent_search_tracks.dart';
@@ -488,25 +489,32 @@ class _OnlineSearchSectionState extends ConsumerState<OnlineSearchSection> {
     setState(() {});
     _progress.update('Downloading ${track.title} from ${source.name}…');
     try {
-      final prepare =
-          widget.prepare ??
-          (source, track, onStatus) => playOnlineTrack(
-            source.id,
-            track,
-            onStatus: onStatus,
-            forDownload: true,
-            downloadQuality: downloadQuality,
+      final saved = await DownloadActivity.instance.run(
+        title: track.title,
+        artist: track.artist,
+        task: () async {
+          final prepare =
+              widget.prepare ??
+              (source, track, onStatus) => playOnlineTrack(
+                source.id,
+                track,
+                onStatus: onStatus,
+                forDownload: true,
+                downloadQuality: downloadQuality,
+              );
+          final song = await prepare(source, track, (message) {
+            DownloadActivity.instance.status(message);
+            if (mounted && _saving.contains(key)) _progress.update(message);
+          });
+          if (mounted) {
+            _progress.update('Saving ${track.title} to your library…');
+          }
+          final cover = await _cover(result);
+          return (widget.downloader ?? LibraryDownloader()).save(
+            song,
+            artwork: cover,
           );
-      final song = await prepare(source, track, (message) {
-        if (mounted && _saving.contains(key)) _progress.update(message);
-      });
-      if (mounted) {
-        _progress.update('Saving ${track.title} to your library…');
-      }
-      final cover = await _cover(result);
-      final saved = await (widget.downloader ?? LibraryDownloader()).save(
-        song,
-        artwork: cover,
+        },
       );
       _say(
         saved.fallback

@@ -111,7 +111,7 @@ class _YoutubeMusicPlaylistsScreenState
     final shown = _items.where((p) => _showHidden || !_hidden.contains(p.id)).toList();
     return Scaffold(
       appBar: AppBar(
-        title: const Text('YouTube Music playlists'),
+        title: const Text('Youtube Music'),
         actions: [
           IconButton(
             tooltip: 'Update playlists', onPressed: _updating ? null : () => unawaited(_refresh()),

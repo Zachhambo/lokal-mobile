@@ -1,3 +1,4 @@
+import 'package:flick/features/search/download_activity.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
@@ -618,6 +619,9 @@ class SoulseekService extends ChangeNotifier with WidgetsBindingObserver {
       ? LokalDesktopSource.instance.runLibraryTransfer(() => _queue(file))
       : _queue(file);
 
+  String _activityId(SoulseekFile file) =>
+      'soulseek:' + sha256.convert(utf8.encode(file.key)).toString();
+
   Future<void> _queue(SoulseekFile file) async {
     if (!await ensureConnected())
       throw StateError('Soulseek is not connected.');
@@ -638,6 +642,10 @@ class SoulseekService extends ChangeNotifier with WidgetsBindingObserver {
     }
     _pending[file.key] = {...file.toMap(), 'path': info['path']};
     await _savePending();
+    await DownloadActivity.instance.transfer(
+      id: _activityId(file), title: file.name, artist: 'Soulseek',
+      state: 'Queued', progress: 0,
+    );
     await refresh();
   }
 
@@ -665,6 +673,10 @@ class SoulseekService extends ChangeNotifier with WidgetsBindingObserver {
     }
     await _call(action, {'username': file.username, 'filename': file.filename});
     if (action == 'cancel') {
+      await DownloadActivity.instance.transfer(
+        id: _activityId(file), title: file.name, artist: 'Soulseek',
+        state: 'Cancelled', progress: 0,
+      );
       await _loadPending();
       _pending.remove(file.key);
       await _savePending();
@@ -770,6 +782,20 @@ class SoulseekService extends ChangeNotifier with WidgetsBindingObserver {
           queuePosition: (item['queuePosition'] as num?)?.toInt(),
         );
         rows.add(entry);
+        if (stored != null || entry.status != 'completed') {
+        await DownloadActivity.instance.transfer(
+          id: _activityId(file), title: file.name, artist: 'Soulseek',
+          state: switch (entry.status) {
+            'completed' => 'Saving',
+            'failed' => 'Failed',
+            'cancelled' => 'Cancelled',
+            'paused' => 'Paused',
+            'downloading' => 'Downloading',
+            _ => 'Queued',
+          },
+          progress: entry.progress,
+        );
+        }
         final retryAt = _importRetryAfter[file.key];
         if (entry.status == 'completed' &&
             stored != null &&
@@ -835,7 +861,9 @@ class SoulseekService extends ChangeNotifier with WidgetsBindingObserver {
       final title = p
           .basenameWithoutExtension(file.name)
           .replaceFirst(RegExp(r'^\d{1,3}[\s._-]+'), '');
-      await LibraryDownloader().save(
+      await DownloadActivity.instance.run(
+        id: _activityId(file), title: title, artist: artist,
+        task: () => LibraryDownloader().save(
         Song(
           id: 'soulseek:' + sha256.convert(utf8.encode(file.key)).toString(),
           title: metadata?.title?.trim().isNotEmpty == true
@@ -854,6 +882,7 @@ class SoulseekService extends ChangeNotifier with WidgetsBindingObserver {
           fileType: file.extension,
           filePath: source,
           sourceDisplayName: 'Soulseek',
+        ),
         ),
       );
       _pending.remove(file.key);

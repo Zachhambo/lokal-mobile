@@ -1,3 +1,4 @@
+import 'package:flick/features/search/download_activity.dart';
 import 'package:flick/features/discovery/discovery_models.dart';
 import 'package:flick/features/discovery/recommendation_match.dart';
 import 'package:flick/features/konnekted/konnekted_discovery.dart';
@@ -116,43 +117,54 @@ class PlaylistUnmatchedDownloader {
     Future<Song> Function(String sourceId, DiscoveryTrack track)? prepare,
     Future<LibraryDownloadResult> Function(Song ready)? save,
   }) async {
-    var chosen = directYouTube(link, entry);
-    if (chosen == null) {
-      final client = http.Client();
-      try {
-        chosen = await findSource(
-          entry,
-          await (sources?.call(client) ?? onlineSources(client)),
-          verifySource: verifySource,
-          onStatus: onStatus,
-          cancelled: cancelled,
-        );
-      } finally {
-        client.close();
-      }
-    }
-    if (chosen == null) throw const PlaylistDownloadSourceUnavailable();
-    if (cancelled?.call() == true) {
-      throw const DiscoveryException('Download cancelled.');
-    }
-    onStatus?.call('Downloading ${entry.title} to library…');
-    final ready =
-        await (prepare?.call(chosen.sourceId, chosen.track) ??
-            playOnlineTrack(
-              chosen.sourceId,
-              chosen.track,
-              forDownload: true,
+    return DownloadActivity.instance.run(
+      title: entry.title,
+      artist: entry.artist,
+      task: () async {
+        final report = onStatus;
+        onStatus = (message) {
+          DownloadActivity.instance.status(message);
+          report?.call(message);
+        };
+        var chosen = directYouTube(link, entry);
+        if (chosen == null) {
+          final client = http.Client();
+          try {
+            chosen = await findSource(
+              entry,
+              await (sources?.call(client) ?? onlineSources(client)),
+              verifySource: verifySource,
               onStatus: onStatus,
-              cancel: cancel,
-            ));
-    if (cancelled?.call() == true) {
-      throw const DiscoveryException('Download cancelled.');
-    }
-    if (requireAtmos && !ready.atmosEncoded) {
-      throw StateError('No verified Dolby Atmos download matched this song.');
-    }
-    onStatus?.call('Saving ${entry.title} to your library…');
-    return save?.call(ready) ??
-        LibraryDownloader().save(ready, artwork: chosen.track.artwork);
+              cancelled: cancelled,
+            );
+          } finally {
+            client.close();
+          }
+        }
+        if (chosen == null) throw const PlaylistDownloadSourceUnavailable();
+        if (cancelled?.call() == true) {
+          throw const DiscoveryException('Download cancelled.');
+        }
+        onStatus?.call('Downloading ${entry.title} to library…');
+        final ready =
+            await (prepare?.call(chosen.sourceId, chosen.track) ??
+                playOnlineTrack(
+                  chosen.sourceId,
+                  chosen.track,
+                  forDownload: true,
+                  onStatus: onStatus,
+                  cancel: cancel,
+                ));
+        if (cancelled?.call() == true) {
+          throw const DiscoveryException('Download cancelled.');
+        }
+        if (requireAtmos && !ready.atmosEncoded) {
+          throw StateError('No verified Dolby Atmos download matched this song.');
+        }
+        onStatus?.call('Saving ${entry.title} to your library…');
+        return save?.call(ready) ??
+            LibraryDownloader().save(ready, artwork: chosen.track.artwork);
+      },
+    );
   }
 }

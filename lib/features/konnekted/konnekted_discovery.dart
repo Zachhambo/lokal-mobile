@@ -1,3 +1,4 @@
+import 'package:flick/features/search/download_activity.dart';
 import 'package:flick/features/morneye/morneye_session.dart';
 import 'package:flick/core/utils/online_source_log_label.dart';
 import 'package:flick/core/utils/artist_credits.dart';
@@ -2080,6 +2081,11 @@ Future<Song> playOnlineTrack(
   bool forDownload = false,
   String? downloadQuality,
 }) async {
+  final reportStatus = onStatus;
+  onStatus = (message) {
+    DownloadActivity.instance.status(message);
+    reportStatus?.call(message);
+  };
   var settings = const DiscoverySettings();
   // The chosen native YouTube or Morneye source has no dependency on HTTP
   // addon settings. Avoid storage I/O on the time-critical playback path.
