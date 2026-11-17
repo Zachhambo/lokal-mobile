@@ -350,6 +350,14 @@ class LinkSyncCoordinator {
     var changed = false;
     for (final kind in ['library', 'history']) {
       if (kind == 'history') await _backfillHistory();
+      if (kind == 'library') {
+        // Older clients recorded some online-only IDs in the favorites
+        // baseline without journaling their like. Reconcile durable hearts
+        // before reading the outgoing cursor so Sync Now repairs them.
+        final likedIds =
+            (prefs.getStringList('favorite_song_ids') ?? []).toSet();
+        await LinkJournal.instance.captureFavorites(likedIds);
+      }
       _requireReady();
       final phase = kind == 'history'
           ? LinkSyncPhase.history

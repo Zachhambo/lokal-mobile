@@ -9,6 +9,7 @@ import '../../data/repositories/song_repository.dart';
 import '../../models/song.dart';
 import '../../models/playlist.dart';
 import 'link_protocol.dart';
+import 'link_favorite_snapshot.dart';
 
 /// Local append-only logs. Pairing never clears or replaces the phone's library.
 class LinkJournal {
@@ -191,17 +192,55 @@ class LinkJournal {
     final songs = {
       for (final song in await SongRepository().getAllSongs()) song.id: song,
     };
-    for (final id in {...ids, ...previous})
-      if (ids.contains(id) != previous.contains(id) && songs[id] != null) {
-        final song = songs[id]!;
-        await append(
-          'like',
-          await trackKeyFor(song),
-          ids.contains(id) ? 'like' : 'unlike',
-          songWire(song),
-        );
+    Map<String, dynamic> snapshots = {};
+    try {
+      final raw = jsonDecode(
+        prefs.getString('favorite_online_song_metadata_v1') ?? '{}',
+      );
+      if (raw is Map) snapshots = Map<String, dynamic>.from(raw);
+    } catch (_) {
+      // A corrupt display snapshot must not suppress ordinary local likes.
+    }
+
+    // Keep unsent changes pending. Old versions advanced this baseline even
+    // when online-only likes were skipped. Revisit those IDs once on upgrade.
+    final migrate = prefs.getBool('lokal.link.favorites_snapshot_v2') != true;
+    final synchronized = linkFavoriteBaselineAfterUpgrade(
+      previous,
+      likedIds: ids,
+      catalogIds: songs.keys.toSet(),
+      migrate: migrate,
+    );
+    for (final id in {...ids, ...previous}) {
+      final liked = ids.contains(id);
+      if (liked == synchronized.contains(id)) continue;
+      final wire = await linkFavoriteWire(
+        id,
+        library: songs,
+        snapshots: snapshots,
+        trackKeyFor: trackKeyFor,
+        songWire: songWire,
+      );
+      if (wire == null) continue;
+      await append(
+        'like',
+        wire['track_key'] as String,
+        liked ? 'like' : 'unlike',
+        wire,
+      );
+      if (liked) {
+        synchronized.add(id);
+      } else {
+        synchronized.remove(id);
       }
-    await prefs.setStringList('lokal.link.favorites_snapshot', ids.toList());
+    }
+    await prefs.setStringList(
+      'lokal.link.favorites_snapshot',
+      synchronized.toList(),
+    );
+    if (migrate) {
+      await prefs.setBool('lokal.link.favorites_snapshot_v2', true);
+    }
   }
 
   Future<String> playlistUuid(String localId) async {
