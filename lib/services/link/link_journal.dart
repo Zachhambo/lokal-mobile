@@ -202,9 +202,15 @@ class LinkJournal {
       // A corrupt display snapshot must not suppress ordinary local likes.
     }
 
-    // Keep unsent changes pending. Advancing the baseline for an online-only
-    // song without a repository row silently loses its like forever.
-    final synchronized = Set<String>.of(previous);
+    // Keep unsent changes pending. Old versions advanced this baseline even
+    // when online-only likes were skipped. Revisit those IDs once on upgrade.
+    final migrate = prefs.getBool('lokal.link.favorites_snapshot_v2') != true;
+    final synchronized = linkFavoriteBaselineAfterUpgrade(
+      previous,
+      likedIds: ids,
+      catalogIds: songs.keys.toSet(),
+      migrate: migrate,
+    );
     for (final id in {...ids, ...previous}) {
       final liked = ids.contains(id);
       if (liked == previous.contains(id)) continue;
@@ -232,6 +238,9 @@ class LinkJournal {
       'lokal.link.favorites_snapshot',
       synchronized.toList(),
     );
+    if (migrate) {
+      await prefs.setBool('lokal.link.favorites_snapshot_v2', true);
+    }
   }
 
   Future<String> playlistUuid(String localId) async {
