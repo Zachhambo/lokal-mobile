@@ -10,6 +10,40 @@ String envelope(String body) =>
 String text(XmlDocument doc, String name) =>
     doc.findAllElements(name, namespaceUri: '*').first.innerText;
 void main() {
+  test('grouped room targets its coordinator while keeping the selected room identity', () async {
+    final topology =
+        '<ZoneGroups><ZoneGroup Coordinator="MASTER"><ZoneGroupMember UUID="MEMBER" Location="http://member/device.xml"/><ZoneGroupMember UUID="MASTER" Location="http://master/device.xml"/></ZoneGroup></ZoneGroups>';
+    final backend = DlnaBackend(
+      client: MockClient((r) async {
+        if (r.method == 'POST')
+          return http.Response(
+            envelope(
+              '<ZoneGroupState>${XmlText(topology).toXmlString()}</ZoneGroupState>',
+            ),
+            200,
+          );
+        return http.Response(
+          '<root><device><manufacturer>Sonos</manufacturer><UDN>uuid:MASTER</UDN><friendlyName>Living room</friendlyName><serviceList>'
+          '<service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType><controlURL>/av</controlURL></service>'
+          '<service><serviceType>urn:schemas-upnp-org:service:GroupRenderingControl:1</serviceType><controlURL>/group</controlURL></service>'
+          '</serviceList></device></root>',
+          200,
+        );
+      }),
+    );
+    const selected = CastDevice(
+      id: 'uuid:MEMBER',
+      name: 'Kitchen',
+      backend: CastBackend.dlna,
+      isSonos: true,
+      topologyControlUrl: 'http://member/topology',
+    );
+    final target = await backend.coordinator(selected);
+    expect(target.id, selected.id);
+    expect(target.name, 'Kitchen (2 rooms)');
+    expect(target.controlUrl, 'http://master/av');
+    expect(target.groupRenderingControlUrl, 'http://master/group');
+  });
   test('DIDL metadata survives SOAP encoding with artist, album, artwork and exact MIME', () async {
     late http.Request request;
     final backend = DlnaBackend(

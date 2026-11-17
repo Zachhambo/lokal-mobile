@@ -44,6 +44,7 @@ class CastingService {
   final _dlnaItems =
       <({Song song, int index, String url, String meta, String? artworkUrl})>[];
   int _dlnaRevision = 0;
+  int _dlnaPollRevision = 0;
   bool _dlnaBusy = false;
   bool _dlnaPollBusy = false;
   int _dlnaTrackNumber = 1;
@@ -947,6 +948,7 @@ class CastingService {
   Future<void> delegatePause() async {
     if (_activeDevice == null) return;
     if (_activeDevice!.backend == CastBackend.dlna) {
+      _dlnaPollRevision++;
       _dlnaWantPlay = false;
       await _serializeDlna(() async {
         if (_activeDevice?.backend == CastBackend.dlna)
@@ -962,6 +964,7 @@ class CastingService {
   Future<void> delegateResume() async {
     if (_activeDevice == null) return;
     if (_activeDevice!.backend == CastBackend.dlna) {
+      _dlnaPollRevision++;
       _dlnaWantPlay = true;
       await _serializeDlna(() async {
         if (_activeDevice?.backend == CastBackend.dlna)
@@ -979,6 +982,7 @@ class CastingService {
     // previous track here would invalidate the pending replacement source.
     if (_sourcePreparations > 0 || _pendingCastLoadId != null) return;
     if (_activeDevice!.backend == CastBackend.dlna) {
+      _dlnaPollRevision++;
       await _dlna.seek(_activeDevice!.controlUrl!, position);
     } else if (_lastCcStatus?['finished'] == true && _currentSong != null) {
       final song = _currentSong!;
@@ -1012,6 +1016,7 @@ class CastingService {
     final v = volume.clamp(0.0, 1.0);
     if (_activeDevice!.backend == CastBackend.dlna) {
       final device = _activeDevice!;
+      _dlnaPollRevision++;
       if (device.renderingControlUrl == null &&
           device.groupRenderingControlUrl == null)
         return;
@@ -1344,9 +1349,15 @@ class CastingService {
           _dlnaPollBusy)
         return;
       _dlnaPollBusy = true;
+      final revision = _dlnaRevision;
+      final pollRevision = _dlnaPollRevision;
+      bool current() =>
+          identical(device, _activeDevice) &&
+          revision == _dlnaRevision &&
+          pollRevision == _dlnaPollRevision;
       try {
         final info = await _dlna.getPosition(controlUrl);
-        if (!identical(device, _activeDevice) || _dlnaBusy) return;
+        if (!current() || _dlnaBusy) return;
         if (info == null) {
           if (++_dlnaFailures >= 4) {
             errorNotifier.value = 'The receiver is unreachable. Retry, or leave casting to return to this device paused.';
@@ -1374,7 +1385,7 @@ class CastingService {
             position: info.position,
             playing: info.playing,
           );
-          if (!identical(device, _activeDevice)) return;
+          if (!current()) return;
           _dlnaQueueKey = null;
         } else if (info.uri.isNotEmpty &&
             entry == null &&
@@ -1393,9 +1404,9 @@ class CastingService {
                 device.groupRenderingControlUrl != null) &&
             tick++ % 2 == 0) {
           final v = await _dlna.deviceVolume(device);
-          if (v != null && identical(device, _activeDevice))
-            remoteVolumeNotifier.value = v / 100.0;
+          if (v != null && current()) remoteVolumeNotifier.value = v / 100.0;
         }
+        if (!current()) return;
         final finished =
             info.state == 'STOPPED' &&
             _dlnaWasPlaying &&
@@ -1608,6 +1619,7 @@ class CastingService {
     final key =
         '${ps.currentIndex}|$mode|${indices.map((i) => '$i:${playlist[i].id}:${playlist[i].filePath}').join('|')}';
     if (key == _dlnaQueueKey) return;
+    _dlnaPollRevision++;
     _dlnaBusy = true;
     try {
       final control = device!.controlUrl!;
