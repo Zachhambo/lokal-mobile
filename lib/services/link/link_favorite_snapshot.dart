@@ -62,3 +62,20 @@ Future<Map<String, dynamic>?> linkFavoriteWire(
   }
   return linkFavoriteSnapshotWire(snapshots[id]);
 }
+
+/// Previous mobile releases included online favorite IDs in the sync baseline
+/// even though they never emitted an operation for those IDs. Revisit those
+/// currently-liked entries once after upgrading; keep local-song baselines
+/// intact, and retain pending unlikes for later delivery.
+Set<String> linkFavoriteBaselineAfterUpgrade(
+  Set<String> previous, {
+  required Set<String> likedIds,
+  required Set<String> catalogIds,
+  required bool migrate,
+}) {
+  if (!migrate) return {...previous};
+  return {
+    for (final id in previous)
+      if (!likedIds.contains(id) || catalogIds.contains(id)) id,
+  };
+}
