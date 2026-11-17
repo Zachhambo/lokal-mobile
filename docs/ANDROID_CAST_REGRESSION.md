@@ -20,8 +20,14 @@ Local engine state and Rust position/status listeners now yield to Cast on
 all platforms. A lightweight notification update follows receiver
 playing/buffering and source preparation, before artwork/favorite lookups
 complete. Android declares connected-device foreground work while casting,
-keeps CPU and normal Wi-Fi residency during playback/buffering/preparation,
-and releases the Wi-Fi lock on pause, disconnect and service destruction.
+keeps CPU protection during playback/buffering/preparation, and uses a
+screen-off-capable Wi-Fi lock only where Android still supports one:
+FULL on API 26–28, HIGH_PERF on API 29–33. API 34+ automatically remaps
+HIGH_PERF to screen-on-only LOW_LATENCY, so no Wi-Fi lock is requested there;
+the relay uses its connected-device foreground service, partial CPU wake lock
+and normal platform network scheduling. This does not establish a guarantee
+against modern Android/OEM Wi-Fi suspension. Wi-Fi locks are released on
+pause, disconnect and service destruction.
 Local playback still uses the media-playback foreground type. Google's CAF
 still owns the Cast media session and notification controls.
 
@@ -29,7 +35,8 @@ These are source-level fixes for screen-off suspension; without device logs
 they do not establish that a particular reported stop was an OS process kill.
 No automatic background restart or receiver replay is introduced after a
 force-stop or real process death. Native tests simulate screen-off and several
-track/buffering transitions and assert foreground type, CPU/Wi-Fi protection,
+track/buffering transitions on API 28/29/33/34 and assert foreground type,
+CPU protection and version-appropriate Wi-Fi lock selection,
 pause/disconnect cleanup and service-destruction cleanup. Dart tests verify
 that Cast can establish its foreground relay before metadata is ready.
 
@@ -40,7 +47,10 @@ Device validation still required:
   pause/resume, buffering, next-track preparation and loss of Wi-Fi. Capture
   process exit reason/logcat if the process disappears; tests cannot reproduce
   OEM battery managers or establish a physical Cast endurance result.
-- Check CPU/Wi-Fi locks in dumpsys while playing/buffering, then confirm release
+- Repeat screen-off relay transfers on a real API 29–33 device and an API 34+
+  device. An acquired Robolectric lock does not prove network residency.
+- Check CPU/Wi-Fi locks in dumpsys while playing/buffering (no Wi-Fi lock is
+  expected on API 34+), then confirm release
   on pause, stop casting and service destruction. Repeat ordinary local, USB
   and Bluetooth playback to verify their existing lifetime is unchanged.
 

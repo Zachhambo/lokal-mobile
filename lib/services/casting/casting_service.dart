@@ -743,6 +743,7 @@ class CastingService {
           _completion.clear();
           _currentSong = null;
           _lastCcStatus = null;
+          PlayerService().isBufferingNotifier.value = false;
         }
       }
       rethrow;

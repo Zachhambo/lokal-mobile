@@ -5,6 +5,7 @@ import android.app.Notification
 import android.content.Intent
 import android.os.Looper
 import android.os.PowerManager
+import android.os.Build
 import android.net.wifi.WifiManager
 import android.content.pm.ServiceInfo
 import io.flutter.plugin.common.BinaryMessenger
@@ -133,7 +134,9 @@ class MusicMediaSessionTest {
         .getDeclaredField("castWifiLock").apply { isAccessible = true }
         .get(service) as? WifiManager.WifiLock)?.isHeld == true
 
-    @Test fun screenOffCastKeepsRelayAliveAcrossBufferingAndSeveralTracks() {
+    @Test
+    @Config(sdk = [28, 29, 33, 34])
+    fun screenOffCastKeepsRelayAliveAcrossBufferingAndSeveralTracks() {
         val power = service.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager
         shadowOf(power).setIsInteractive(false)
         service.onStartCommand(Intent().apply {
@@ -141,7 +144,9 @@ class MusicMediaSessionTest {
             putExtra("isNativeChromecast", true)
             putExtra("isPlaying", true)
         }, 0, 1)
-        assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE, service.foregroundServiceType)
+        if (Build.VERSION.SDK_INT >= 29) {
+            assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE, service.foregroundServiceType)
+        }
         repeat(6) { track ->
             // Receiver buffers while the local audio engine is paused.
             service.onStartCommand(Intent().apply {
@@ -149,34 +154,36 @@ class MusicMediaSessionTest {
                 putExtra("castBuffering", true)
             }, 0, track * 3 + 2)
             assertTrue(wakeHeld())
-            assertTrue(wifiHeld())
+            assertEquals(Build.VERSION.SDK_INT < 34, wifiHeld())
             // Delayed artwork or position updates cannot drop protection.
             service.onStartCommand(Intent().apply {
                 putExtra("title", "Recording $track")
                 putExtra("position", 0L)
             }, 0, track * 3 + 3)
             assertTrue(wakeHeld())
-            assertTrue(wifiHeld())
+            assertEquals(Build.VERSION.SDK_INT < 34, wifiHeld())
             service.onStartCommand(Intent().apply {
                 putExtra("isPlaying", true)
                 putExtra("castBuffering", false)
             }, 0, track * 3 + 4)
             assertTrue(wakeHeld())
-            assertTrue(wifiHeld())
+            assertEquals(Build.VERSION.SDK_INT < 34, wifiHeld())
         }
         val foreground = requireNotNull(shadowOf(service).lastForegroundNotification)
         assertEquals(Notification.CATEGORY_SERVICE, foreground.category)
         assertNull(MediaNotificationCompat.MediaStyle.getMediaSession(foreground))
     }
 
-    @Test fun castPauseAndDisconnectReleaseNetworkProtection() {
+    @Test
+    @Config(sdk = [29, 34])
+    fun castPauseAndDisconnectReleaseNetworkProtection() {
         service.onStartCommand(Intent().apply {
             putExtra("isCasting", true)
             putExtra("isNativeChromecast", true)
             putExtra("isPlaying", true)
         }, 0, 1)
         assertTrue(wakeHeld())
-        assertTrue(wifiHeld())
+        assertEquals(Build.VERSION.SDK_INT < 34, wifiHeld())
         service.onStartCommand(Intent().apply {
             putExtra("isPlaying", false)
             putExtra("castBuffering", false)
@@ -187,7 +194,7 @@ class MusicMediaSessionTest {
             putExtra("castBuffering", true)
         }, 0, 3)
         assertTrue(wakeHeld())
-        assertTrue(wifiHeld())
+        assertEquals(Build.VERSION.SDK_INT < 34, wifiHeld())
         service.onStartCommand(Intent().apply {
             putExtra("isCasting", false)
         }, 0, 4)
@@ -199,7 +206,9 @@ class MusicMediaSessionTest {
         assertFalse(wifiHeld())
     }
 
-    @Test fun destroyingCastServiceReleasesBothLocks() {
+    @Test
+    @Config(sdk = [33, 34])
+    fun destroyingCastServiceReleasesBothLocks() {
         service.onStartCommand(Intent().apply {
             putExtra("isCasting", true)
             putExtra("isPlaying", true)
@@ -207,13 +216,23 @@ class MusicMediaSessionTest {
         val cpu = MusicNotificationService::class.java.getDeclaredField("wakeLock")
             .apply { isAccessible = true }.get(service) as PowerManager.WakeLock
         val wifi = MusicNotificationService::class.java.getDeclaredField("castWifiLock")
-            .apply { isAccessible = true }.get(service) as WifiManager.WifiLock
+            .apply { isAccessible = true }.get(service) as? WifiManager.WifiLock
         assertTrue(cpu.isHeld)
-        assertTrue(wifi.isHeld)
+        assertEquals(Build.VERSION.SDK_INT < 34, wifi?.isHeld == true)
         lifecycle.destroy()
         destroyed = true
         assertFalse(cpu.isHeld)
-        assertFalse(wifi.isHeld)
+        assertFalse(wifi?.isHeld == true)
+    }
+
+    @Suppress("DEPRECATION")
+    @Test fun selectsOnlyScreenOffCapableWifiModesForEachAndroidGeneration() {
+        assertEquals(WifiManager.WIFI_MODE_FULL, castScreenOffWifiLockMode(26))
+        assertEquals(WifiManager.WIFI_MODE_FULL, castScreenOffWifiLockMode(28))
+        assertEquals(WifiManager.WIFI_MODE_FULL_HIGH_PERF, castScreenOffWifiLockMode(29))
+        assertEquals(WifiManager.WIFI_MODE_FULL_HIGH_PERF, castScreenOffWifiLockMode(33))
+        assertNull(castScreenOffWifiLockMode(34))
+        assertNull(castScreenOffWifiLockMode(37))
     }
 
     private fun startingCar(channel: MethodChannel?) {

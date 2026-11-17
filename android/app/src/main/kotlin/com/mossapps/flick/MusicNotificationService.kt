@@ -878,12 +878,19 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
             releaseCastWifiLock()
             return
         }
+        val mode = castScreenOffWifiLockMode(Build.VERSION.SDK_INT)
+        if (mode == null) {
+            // API 34+ maps HIGH_PERF to screen-on-only LOW_LATENCY. There is
+            // no public screen-off WifiLock mode on these releases. Keep the
+            // connected-device foreground service and partial CPU lock active;
+            // normal Wi-Fi power management remains under platform control.
+            releaseCastWifiLock()
+            return
+        }
         try {
             if (castWifiLock == null) {
                 val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-                // Keep normal Wi-Fi residency for the HTTP relay. Low-latency
-                // mode is screen/foreground restricted and is not a screen-off lock.
-                castWifiLock = wifi?.createWifiLock(WifiManager.WIFI_MODE_FULL, "Lokal:cast_relay")
+                castWifiLock = wifi?.createWifiLock(mode, "Lokal:cast_relay")
                     ?.apply { setReferenceCounted(false) }
             }
             castWifiLock?.let { if (!it.isHeld) it.acquire() }
