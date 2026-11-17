@@ -164,7 +164,7 @@ struct LokalWidgetView: View {
 
   private var progressValue: Text {
     let duration = Duration.seconds(Double(model.durationMs) / 1000).formatted(.time(pattern: .hourMinuteSecond))
-    if let interval = model.progressInterval {
+    if model.playbackRate == 1, let interval = model.progressInterval {
       return Text("\(Text(timerInterval: interval, countsDown: false)) / \(duration)")
     }
     let position = Duration.seconds(Double(model.positionMs) / 1000).formatted(.time(pattern: .hourMinuteSecond))
