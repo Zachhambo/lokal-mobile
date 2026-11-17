@@ -45,9 +45,13 @@ void main() {
     expect(executed, ['next']);
     current = List.filled(64, 'b').join();
     await handler.dispatch(link('pause', track: alias, id: '22345678-1234-1234-1234-123456789abc'));
-    await handler.dispatch(link('flow', at: now.subtract(const Duration(minutes: 16)).millisecondsSinceEpoch));
+    await handler.dispatch(link('pause', track: current,
+      id: '32345678-1234-1234-1234-123456789abc',
+      at: now.subtract(const Duration(minutes: 16)).millisecondsSinceEpoch));
     expect(executed, ['next']);
     expect(stale, 2);
+    await handler.dispatch(link('flow', id: '42345678-1234-1234-1234-123456789abc', at: 0));
+    expect(executed, ['next', 'flow']);
   });
 
   test('queued commands serialize; failed work has no completion receipt', () async {

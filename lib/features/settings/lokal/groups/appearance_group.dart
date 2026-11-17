@@ -19,6 +19,7 @@ import 'package:flick/core/theme/lokal_appearance.dart';
 import 'package:flick/core/utils/app_haptics.dart';
 import 'package:flick/features/appearance/lokal_appearance_screen.dart';
 import 'package:flick/features/settings/screens/widget_settings_screen.dart';
+import 'package:flick/features/settings/screens/ios_widget_settings_screen.dart';
 import 'package:flick/l10n/l10n.dart';
 import 'package:flick/providers/providers.dart';
 import 'package:flick/widgets/lokal/settings/lokal_settings_kit.dart';
@@ -386,6 +387,17 @@ List<LokalSettingsSection> appearanceSettings(
           ),
       ],
     ),
+    if (Platform.isIOS)
+      LokalSettingsSection(
+        title: lokalText('Widgets'),
+        children: [
+          LokalSettingLink(
+            label: lokalText('Home Screen & Lock Screen'),
+            description: lokalText('Now Playing, Flow / Radio and Cover Flow.'),
+            onTap: () => _push(context, const IosWidgetSettingsScreen()),
+          ),
+        ],
+      ),
     if (Platform.isAndroid)
       LokalSettingsSection(
         title: lokalText('Home-screen widget'),

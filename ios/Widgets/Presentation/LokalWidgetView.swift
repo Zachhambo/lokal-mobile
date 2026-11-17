@@ -46,7 +46,7 @@ struct LokalWidgetView: View {
       if accessory { accessoryContent }
       else { layout }
     }
-    .widgetURL(configuration == .flowRadio && ready ? link("flow") : link())
+    .widgetURL(configuration == .flowRadio && model.availability != .unavailable ? link("flow") : link())
     .modifier(LokalWidgetBackground(accent: theme.accent, surface: theme.surface, accessory: accessory))
   }
 
@@ -86,7 +86,7 @@ struct LokalWidgetView: View {
       Image(systemName: "opticaldisc").foregroundStyle(theme.accent)
       Text("LOKAL").tracking(2).fontWeight(.bold)
       Spacer(minLength: 4)
-      Text(lokalWidgetText(model.isBuffering ? "Buffering" :
+      Text(lokalWidgetText(model.availability == .stale ? "Open Lokal to refresh" : model.isBuffering ? "Buffering" :
         model.isPlaying ? "Now Playing" : "Open Lokal")).foregroundStyle(.secondary)
         .lineLimit(1).minimumScaleFactor(0.8)
     }.font(.caption2)
@@ -111,7 +111,7 @@ struct LokalWidgetView: View {
               .frame(width: large ? 120 : 62, height: large ? 120 : 62)
           }
           VStack(alignment: .leading, spacing: 5) {
-            if !large { Text("LOKAL").font(.system(size: 9, weight: .bold)).tracking(2).foregroundStyle(theme.accent) }
+            if !large { Text(ready ? "LOKAL" : lokalWidgetText("Open Lokal to refresh")).font(.system(size: 9, weight: .bold)).tracking(2).foregroundStyle(theme.accent) }
             metadata(track, compact: compact)
           }.frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -250,7 +250,7 @@ struct LokalWidgetView: View {
           }
         }
       }
-      Text(lokalWidgetText("Your Flow")).font(.caption2).foregroundStyle(.secondary)
+      Text(lokalWidgetText(ready ? "Your Flow" : "Open Lokal to refresh")).font(.caption2).foregroundStyle(.secondary)
     }
   }
 
