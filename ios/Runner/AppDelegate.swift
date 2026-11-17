@@ -7,6 +7,7 @@ import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+  private var widgetBridge: LokalWidgetBridge?
   private var lokalPlatform: LokalPlatform?
   private let transferHost = LokalTransferHost()
   private var transferBridge: LokalTransferBridge?
@@ -17,6 +18,27 @@ import UserNotifications
   private var lifecycleObservers: [NSObjectProtocol] = []
   private var protectedDataObserver: NSObjectProtocol?
   private var pendingDocuments: [URL] = []
+
+  func openWidgetURLs(_ urls: [URL]) {
+    for url in urls where url.scheme == "konnekted" && url.host == "widget" {
+      if let widgetBridge { widgetBridge.open(url) }
+      else if url.absoluteString.utf8.count <= 2048 {
+        let key = "lokal.widget.pending-actions.v1"
+        var pending = UserDefaults.standard.stringArray(forKey: key) ?? []
+        if !pending.contains(url.absoluteString) { pending.append(url.absoluteString) }
+        UserDefaults.standard.set(Array(pending.suffix(8)), forKey: key)
+      }
+    }
+  }
+
+  override func application(_ app: UIApplication, open url: URL,
+                            options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+    if url.scheme == "konnekted", url.host == "widget" {
+      openWidgetURLs([url])
+      return true
+    }
+    return super.application(app, open: url, options: options)
+  }
 
   func openDocuments(_ urls: [URL]) {
     if let platform = lokalPlatform { platform.openDocuments(urls) }
@@ -73,6 +95,7 @@ import UserNotifications
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    widgetBridge = LokalWidgetBridge(messenger: engineBridge.applicationRegistrar.messenger())
     lokalPlatform = LokalPlatform(messenger: engineBridge.applicationRegistrar.messenger())
     transferBridge = LokalTransferBridge(
       messenger: engineBridge.applicationRegistrar.messenger(), host: transferHost)

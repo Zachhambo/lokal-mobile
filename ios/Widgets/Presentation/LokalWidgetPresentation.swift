@@ -26,6 +26,8 @@ enum LokalWidgetConfiguration: String, CaseIterable, Sendable {
 }
 
 struct LokalWidgetPresentation: Sendable {
+  let revision: Int
+  let updatedAtMs: Int
   let availability: LokalWidgetAvailability
   let current: LokalWidgetTrackPresentation?
   let recommendations: [LokalWidgetTrackPresentation]
@@ -44,6 +46,8 @@ struct LokalWidgetPresentation: Sendable {
   init(snapshot: LokalWidgetSnapshot?, at date: Date, unavailable: Bool = false) {
     let reader = snapshot ?? LokalWidgetSnapshot(raw: nil)
     let fields = reader.json
+    revision = fields["revision"] as? Int ?? 0
+    updatedAtMs = fields["updatedAtMs"] as? Int ?? 0
     current = LokalWidgetTrackPresentation(fields["current"] as? [String: Any])
     recommendations = (fields["recommendations"] as? [[String: Any]] ?? [])
       .prefix(3).compactMap { LokalWidgetTrackPresentation($0) }

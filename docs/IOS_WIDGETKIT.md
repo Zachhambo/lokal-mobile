@@ -1,11 +1,54 @@
-# iPhone widgets: shared data and implementation gates
+# iPhone widgets
 
-**Archived research — excluded from the iOS release by user request on
-29 October 2026 (Europe/Paris).** The following implementation/evidence history
-is retained for reference. WidgetKit rendering, provisioning and actions are
-not release gates. The app does not start the iOS publisher/sampler or register
-its widget publication channel; the research workflow is manual-only. Android
-widgets and iPhone system media controls remain separate and unchanged.
+The widget implementation is being reactivated at the user's request on
+17 November 2026 (Europe/Paris). The former pre-release research remains below
+as historical evidence, rather than a claim about the new integration.
+
+The shipping Runner target now depends on and embeds LokalWidgets.appex. Both
+products declare group.app.lokal.mobile.widgets, and the host registers the
+publication and action channels. The existing player publishes bounded metadata,
+owned artwork and the chosen accent; the existing Flow owner supplies mix
+selections. No separate audio engine is constructed by the extension.
+
+Now Playing, Flow / Radio and Cover Flow support small, medium and large Home
+Screen widgets and inline, circular and rectangular Lock Screen families.
+Controls use app-opening links on iOS 16 and later. These are deliberately not
+advertised as background AppIntent playback: they open/unlock Lokal to carry out
+the action through its current player. Small/Lock Screen widgets open the player;
+the larger Home Screen layouts expose transport, queue, Flow/radio and mix links.
+
+Commands carry an opaque recording alias, source time and unique ID. The native
+inbox retains requests until Dart acknowledges successful handling. The app
+serializes actions, rejects stale/wrong-recording controls and persists bounded
+completion receipts. Play and pause are absolute requests, never replayed toggles.
+
+## Installation
+
+Install or update the IPA with its **Lokal Widgets** extension retained. Both app
+and extension must be signed by the same account with their matching App Group.
+The widget uses an additional App ID in sideloading tools. Open Lokal once,
+play a song, then use Edit Home Screen > Add Widget > Lokal. On the Lock Screen,
+choose Customize > Add Widgets > Lokal.
+
+A signer may suffix the group identifier; the runtime checks related identifiers
+from the installed provisioning profile and confirms actual OS container access.
+If a signer removes the extension or does not provision shared access, app
+playback stays independent. Unsigned CI builds do not prove signed-device App
+Group access. Language currently follows the widget extension's system locale.
+
+## Validation
+
+The revived PR workflow checks Dart actions/publication, actual Swift 6 storage
+and publisher contracts, real device/simulator extension linkage, and the native
+layout/render matrix. Runner integration and package audits now allowlist only
+this exact extension, matching host version, minimum OS, App Group and native
+binary inventory. Store permissions include the host and extension.
+
+New hosted checks and physical Home Screen installation remain pending until
+reported by the implementing PR. The archived results below concern their
+historical source revisions.
+
+## Archived pre-release research
 
 Status: native publication/sampler contracts and standalone extension linkage accepted; rendering candidate, 27 October 2026 (Europe/Paris).
 The canonical-state builder and Swift/Foundation reader pass the hosted Swift 6

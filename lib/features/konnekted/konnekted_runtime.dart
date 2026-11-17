@@ -34,6 +34,7 @@ import 'package:flick/services/library_scanner_service.dart';
 import 'package:flick/services/player_service.dart';
 import 'package:flick/services/discord_presence_service.dart';
 import 'package:flick/services/widget_intent_handler.dart';
+import 'package:flick/services/ios_widget_integration.dart';
 import 'package:flick/services/widget_sync_service.dart';
 import 'package:flick/widgets/common/floating_scan_progress.dart';
 import 'package:flick/widgets/uac2/usb_bit_perfect_prompt.dart';
@@ -63,6 +64,7 @@ class _KonnektedRuntimeState extends ConsumerState<KonnektedRuntime>
   late final PlayerService _player;
   final _jobNotification = LibraryJobNotification();
   WidgetIntentHandler? _widgetIntents;
+  IosWidgetIntegration? _iosWidgets;
   ProviderSubscription<PlayerState>? _widgetSync;
   late final _jobProgress = LokalStatusSnack(() => mounted ? context : null);
   late final _playbackProgress = LokalStatusSnack(
@@ -204,6 +206,15 @@ class _KonnektedRuntimeState extends ConsumerState<KonnektedRuntime>
     });
     ref.read(updateCheckProvider.notifier);
     _widgetSync = installWidgetSync(ref);
+    if (Platform.isIOS) {
+      final widgets = IosWidgetIntegration(ref,
+        openPlayer: () { if (mounted) widget.onOpenPlayer(); },
+        openQueue: () { if (mounted) widget.onOpenQueue(); },
+        showMessage: (message) { if (mounted) LokalToast.show(context, lokalText(message)); },
+      );
+      _iosWidgets = widgets;
+      _run('iPhone widget integration', widgets.attach);
+    }
     if (Platform.isAndroid) {
       final intents = WidgetIntentHandler(
         ref,
@@ -383,6 +394,7 @@ class _KonnektedRuntimeState extends ConsumerState<KonnektedRuntime>
       SpotifyLikesSyncService.instance.pause();
       ref.read(autoLibrarySyncServiceProvider).notifyPaused();
       _run('Persist playback', _player.persistLastPlayed);
+      if (_iosWidgets case final widgets?) _run('iPhone widget background', widgets.flush);
       if (Platform.isAndroid) {
         _run('Widget background sync', WidgetSyncService.instance.pushPaused);
       }
@@ -390,6 +402,7 @@ class _KonnektedRuntimeState extends ConsumerState<KonnektedRuntime>
       _run('Flush app log', AppLog.instance.flushToDisk);
       _finishPausedScrobble();
     } else if (state == AppLifecycleState.resumed) {
+      if (_iosWidgets case final widgets?) _run('iPhone widget refresh', widgets.refresh);
       SpotifyLikesSyncService.instance.resume();
       _backgrounded = false;
       _maybeShowUpdate();
@@ -457,6 +470,7 @@ class _KonnektedRuntimeState extends ConsumerState<KonnektedRuntime>
     _jobProgress.dispose();
     _jobNotification.dispose();
     _widgetSync?.close();
+    _iosWidgets?.dispose();
     final intents = _widgetIntents;
     if (intents != null) _run('Widget intent detach', intents.detach);
     _run('Discord presence shutdown', DiscordPresenceService.instance.stop);

@@ -763,3 +763,14 @@ See `docs/SEARCH_AND_ALBUM_LOOKUP.md` for validation and remaining test limits.
 ## iPhone integration
 
 The unsigned iPhone beta and its release evidence are documented in [IOS_PORT.md](IOS_PORT.md) and [IOS_SIDELOADING.md](IOS_SIDELOADING.md). The current merge with Android main has separate qualification gates; see [IOS_MAIN_INTEGRATION.md](IOS_MAIN_INTEGRATION.md). Signing and physical-iPhone acceptance remain outstanding.
+
+
+## iPhone WidgetKit revival — 17 November 2026
+
+Now Playing, Flow / Radio and Cover Flow are integrated into Runner with shared
+App Group metadata/artwork publication, app-opening controls, bounded command
+receipts and Home/Lock Screen families. Larger layouts expose transport and
+mix actions; no second audio engine or background AppIntent execution is claimed.
+Widget and release-package tests are re-enabled for the new PR. Hosted compilation,
+rendered-layout evidence and physical signed-device installation must be reported
+separately; see IOS_WIDGETKIT.md for current scope and sideload setup.

@@ -51,12 +51,31 @@ final class LokalWidgetBridge: @unchecked Sendable {
     }
   }
 
+  private let actions: FlutterMethodChannel
+  private var actionHandlerReady = false
+  private let actionKey = "lokal.widget.pending-actions.v1"
   private let channel: FlutterMethodChannel
   private let queue = DispatchQueue(label: "app.lokal.mobile.widget-publication", qos: .utility)
   private var publisher: LokalWidgetPublisher?
 
   init(messenger: FlutterBinaryMessenger) {
+    actions = FlutterMethodChannel(name: "lokal/widgets/actions", binaryMessenger: messenger)
     channel = FlutterMethodChannel(name: "lokal/widgets", binaryMessenger: messenger)
+    actions.setMethodCallHandler { [weak self] call, result in
+      guard let self else { result([]); return }
+      if call.method == "takePendingActions" {
+        self.actionHandlerReady = true
+        let pending = UserDefaults.standard.stringArray(forKey: self.actionKey) ?? []
+        result(Array(pending.prefix(8)))
+      } else if call.method == "acknowledgeAction", let raw = call.arguments as? String {
+        let pending = UserDefaults.standard.stringArray(forKey: self.actionKey) ?? []
+        UserDefaults.standard.set(pending.filter { $0 != raw }, forKey: self.actionKey)
+        result(nil)
+      } else if call.method == "detach" {
+        self.actionHandlerReady = false
+        result(nil)
+      } else { result(FlutterError(code: "UNSUPPORTED_WIDGET_METHOD", message: "Unknown widget action method.", details: nil)) }
+    }
     channel.setMethodCallHandler { [weak self] call, result in
       let reply = Reply(result)
       guard let self else {
@@ -104,16 +123,30 @@ final class LokalWidgetBridge: @unchecked Sendable {
     }
   }
 
+
+  /// URLs arrive through either the cold scene or an already-running app.
+  /// Capture before Flutter/onboarding is ready, then drain exactly once.
+  @discardableResult
+  func open(_ url: URL) -> Bool {
+    guard url.scheme == "konnekted", url.host == "widget",
+          url.absoluteString.utf8.count <= 2048 else { return false }
+    var pending = UserDefaults.standard.stringArray(forKey: actionKey) ?? []
+    if !pending.contains(url.absoluteString) { pending.append(url.absoluteString) }
+    UserDefaults.standard.set(Array(pending.suffix(8)), forKey: actionKey)
+    if actionHandlerReady { actions.invokeMethod("dispatchPending", arguments: nil) }
+    return true
+  }
+
   /// The optional identifier comes from this installed app's configuration,
   /// never a method argument. No fallback private-app container is invented.
   private func resolvePublisher() throws -> LokalWidgetPublisher {
     dispatchPrecondition(condition: .onQueue(queue))
     if let publisher { return publisher }
-    guard let configured = Bundle.main.object(forInfoDictionaryKey: "LokalWidgetAppGroup") as? String,
-          !configured.isEmpty else { throw Availability.notConfigured }
-    guard configured.utf8.count <= 255,
-          configured.range(of: "^group\\.[A-Za-z0-9][A-Za-z0-9.-]+$", options: .regularExpression) != nil else {
-      throw Availability.invalidConfiguration
+    guard Bundle.main.object(forInfoDictionaryKey: "LokalWidgetAppGroup") != nil else {
+      throw Availability.notConfigured
+    }
+    guard let configured = LokalWidgetGroup.identifier() else {
+      throw Availability.sharedContainerUnavailable
     }
     do {
       let store = try LokalWidgetStore.provisioned(groupIdentifier: configured, createIfMissing: true)
