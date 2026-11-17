@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   prepare:
-    if: github.repository == 'lokal-music/Mobile'
+    if: github.repository == 'Zachhambo/lokal-mobile'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -39,6 +39,7 @@ jobs:
         id: published
         env:
           GH_TOKEN: ${{ github.token }}
+          LOKAL_RELEASE_REPO: Zachhambo/lokal-mobile
         run: python3 tool/platform_releases.py metadata --platform android
       - name: Work out version and pin this commit
         id: metadata

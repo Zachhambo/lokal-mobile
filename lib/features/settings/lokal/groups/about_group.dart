@@ -23,7 +23,7 @@ void _push(BuildContext context, Widget page) => unawaited(
 );
 
 /// Where Lokal for Android's releases are published.
-const lokalReleasesUrl = 'https://github.com/lokal-music/Mobile/releases';
+const lokalReleasesUrl = 'https://github.com/Zachhambo/lokal-mobile/releases';
 
 bool _licencesRegistered = false;
 

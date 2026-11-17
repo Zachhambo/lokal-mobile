@@ -19,7 +19,7 @@ from urllib.parse import quote
 from ios_store_distribution import (PUBLIC_IPA, ipa_name, release_notes,
                                     validate_source, write_source)
 
-REPO = 'lokal-music/mobile'
+REPO = os.environ.get('LOKAL_RELEASE_REPO', 'lokal-music/mobile')
 LEGACY_ANDROID = re.compile(r'v\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?\Z')
 LEGACY_IOS = re.compile(r'ios-sideload-beta-\d+-attempt\d+\Z')
 SHA = re.compile(r'[0-9a-f]{40}\Z')

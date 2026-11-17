@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-const root = 'https://github.com/lokal-music/Mobile/releases/download';
+const root = 'https://github.com/Zachhambo/lokal-mobile/releases/download';
 final hash = List.filled(64, 'a').join();
 Map<String, Object?> release(
   String version, {
@@ -65,7 +65,7 @@ void main() {
       expect(update?.downloadUrl, '$root/android/Lokal-7.5.3-arm64.apk');
       expect(
         update?.pageUrl,
-        'https://github.com/lokal-music/Mobile/releases/tag/android',
+        'https://github.com/Zachhambo/lokal-mobile/releases/tag/android',
       );
     },
   );
@@ -76,7 +76,7 @@ void main() {
       requested.add(request.url);
       if (request.url.host == 'api.github.com') {
         if (request.url.path !=
-            '/repos/lokal-music/Mobile/releases/latest') {
+            '/repos/Zachhambo/lokal-mobile/releases/latest') {
           return http.Response('Wrong repository path', 404);
         }
         return http.Response(jsonEncode(release('2.0.0')), 200);
@@ -123,7 +123,7 @@ void main() {
     final client = MockClient((request) async {
       if (request.url.host == 'api.github.com') {
         expect(request.url.path,
-            '/repos/lokal-music/Mobile/releases/latest');
+            '/repos/Zachhambo/lokal-mobile/releases/latest');
         return http.Response(jsonEncode(legacy), 200);
       }
       expect(request.url.toString(),
@@ -138,7 +138,7 @@ void main() {
       const AppBuildInfo(version: '2.0.0', build: '215113903'), 'full',
     );
     expect(available?.downloadUrl, '$formerRoot/v2.1.0/Lokal-2.1.0-arm64.apk');
-    expect(available?.pageUrl, 'https://github.com/lokal-music/Mobile/releases/tag/v2.1.0');
+    expect(available?.pageUrl, 'https://github.com/Zachhambo/lokal-mobile/releases/tag/v2.1.0');
   });
 
   test('rejects forged GitHub assets even if names and hashes look valid', () async {

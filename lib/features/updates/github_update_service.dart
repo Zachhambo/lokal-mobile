@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flick/providers/app_build_info_provider.dart';
 
-const lokalUpdateReleasesUrl = 'https://github.com/lokal-music/Mobile/releases';
+const lokalUpdateReleasesUrl =
+    'https://github.com/Zachhambo/lokal-mobile/releases';
+const lokalIosUpdateReleasesUrl = 'https://github.com/lokal-music/Mobile/releases';
 
 class LokalUpdateRelease {
   const LokalUpdateRelease({
@@ -24,7 +26,8 @@ class LokalUpdateRelease {
 class GithubUpdateService {
   GithubUpdateService(this.client);
   final http.Client client;
-  static const _repo = 'lokal-music/Mobile';
+  static const _androidRepo = 'Zachhambo/lokal-mobile';
+  static const _iosRepo = 'lokal-music/Mobile';
   static const _headers = {
     'Accept': 'application/vnd.github+json',
     'User-Agent': 'Lokal-Mobile',
@@ -51,6 +54,7 @@ class GithubUpdateService {
     final parts = uri.pathSegments;
     if (parts.length != 6 ||
         !{
+          'zachhambo/lokal-mobile',
           'lokal-music/mobile',
           'lokal-music/lokal-mobile',
           'lokal-konnekt/lokal-mobile',
@@ -87,15 +91,15 @@ class GithubUpdateService {
     final nightly = installed.version.contains('-nightly.');
     final response = await _json(
       nightly
-          ? 'https://api.github.com/repos/$_repo/releases?per_page=20'
-          : 'https://api.github.com/repos/$_repo/releases/latest',
+          ? 'https://api.github.com/repos/$_androidRepo/releases?per_page=20'
+          : 'https://api.github.com/repos/$_androidRepo/releases/latest',
     );
     final data = response is List ? List<dynamic>.of(response) : [response];
     // Replacing a stable release preserves its old creation date, so it may
     // be below many nightlies in the list. Always include GitHub's stable tip.
     if (nightly) {
       final stable = await _json(
-        'https://api.github.com/repos/$_repo/releases/latest',
+        'https://api.github.com/repos/$_androidRepo/releases/latest',
       );
       if (stable is Map<String, dynamic>) data.insert(0, stable);
     }
@@ -172,7 +176,7 @@ class GithubUpdateService {
     // The iPhone channel is independent of GitHub's latest stable Android
     // release and intentionally includes the iOS prerelease.
     final release = await _json(
-      'https://api.github.com/repos/$_repo/releases/tags/ios',
+      'https://api.github.com/repos/$_iosRepo/releases/tags/ios',
     );
     if (release is! Map<String, dynamic> ||
         release['draft'] == true ||
@@ -218,7 +222,7 @@ class GithubUpdateService {
       build: build,
       downloadUrl: ipa,
       sha256: hash.toLowerCase(),
-      pageUrl: '$lokalUpdateReleasesUrl/tag/ios',
+      pageUrl: '$lokalIosUpdateReleasesUrl/tag/ios',
       notes: release['body'] is String ? release['body'] as String : '',
       isIos: true,
     );

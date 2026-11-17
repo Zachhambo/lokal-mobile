@@ -140,9 +140,12 @@ Future<ChangelogEntry?> loadLokalMinorRelease(
       : lokalMinorReleaseFallback)[minor];
   final requestClient = client ?? http.Client();
   try {
+    final repository = forIos
+        ? 'lokal-music/Mobile'
+        : 'Zachhambo/lokal-mobile';
     final uri = Uri.https(
       'api.github.com',
-      '/repos/lokal-music/Mobile/releases/tags/${forIos ? 'ios' : 'android'}',
+      '/repos/$repository/releases/tags/${forIos ? 'ios' : 'android'}',
     );
     final response = await requestClient
         .get(uri, headers: {'Accept': 'application/vnd.github+json'})

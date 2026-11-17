@@ -19,7 +19,7 @@ import java.security.MessageDigest
 import java.util.concurrent.Executors
 
 /** Validate the real GitHub release path, never an arbitrary URL prefix.
- * GitHub redirects previous repository aliases to lokal-music/Mobile.
+ * Previous repository aliases remain accepted for already-published releases.
  */
 internal fun isTrustedLokalReleaseApkUrl(url: String): Boolean {
     val uri = try { URI(url) } catch (_: java.net.URISyntaxException) { return false }
@@ -33,6 +33,7 @@ internal fun isTrustedLokalReleaseApkUrl(url: String): Boolean {
     val parts = (uri.rawPath ?: return false).removePrefix("/").split("/")
     return parts.size == 6 &&
         "${parts[0].lowercase()}/${parts[1].lowercase()}" in setOf(
+            "zachhambo/lokal-mobile",
             "lokal-music/mobile",
             "lokal-music/lokal-mobile",
             "lokal-konnekt/lokal-mobile"

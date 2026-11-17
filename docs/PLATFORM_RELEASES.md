@@ -2,7 +2,7 @@
 
 The public download pages have permanent tags:
 
-- [Android](https://github.com/lokal-music/mobile/releases/tag/android): latest signed stable APK, package metadata and checksums.
+- [Android](https://github.com/Zachhambo/lokal-mobile/releases/tag/android): latest signed stable APK, package metadata and checksums.
 - [iOS](https://github.com/lokal-music/mobile/releases/tag/ios): latest audited IPA, AltStore/SideStore source, matching source code, crash symbols, licenses and qualification report. This is a normal GitHub Release (not a prerelease). Android retains the single GitHub **Latest** designation.
 
 Successful publications update the existing release, move only that platform's tag to the package's source commit, and remove superseded assets after upload verification. Version and build numbers remain inside the packages and manifests. Android's updater reads those manifests, so a new version tag is unnecessary. Android version calculation reads the published manifest before incrementing the version and versionCode.

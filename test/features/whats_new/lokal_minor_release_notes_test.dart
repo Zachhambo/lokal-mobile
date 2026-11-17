@@ -26,6 +26,10 @@ void main() {
   test('parses only the current minor tagged release notes', () async {
     final client = MockClient((request) async {
       expect(request.url.pathSegments.last, 'android');
+      expect(
+        request.url.path,
+        '/repos/Zachhambo/lokal-mobile/releases/tags/android',
+      );
       return http.Response(
         jsonEncode({
           'body': """<!-- lokal-platform:android version:4.3.2 build:123 -->
@@ -51,6 +55,18 @@ Intro
       'Improve playback',
       'Redesign queue',
     ]);
+  });
+
+  test('iOS release notes stay on the iOS release repository', () async {
+    final client = MockClient((request) async {
+      expect(
+        request.url.path,
+        '/repos/lokal-music/Mobile/releases/tags/ios',
+      );
+      return http.Response('Not found', 404);
+    });
+    addTearDown(client.close);
+    await loadLokalMinorRelease('4.3', client: client, forIos: true);
   });
 
   test(

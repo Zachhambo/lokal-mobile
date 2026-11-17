@@ -21,7 +21,7 @@ class RenamedRepositoryContract(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 text = read(path)
-                self.assertIn("if: github.repository == 'lokal-music/Mobile'", text)
+                self.assertIn("if: github.repository == 'Zachhambo/lokal-mobile'", text)
                 self.assertNotIn("if: github.repository == 'Lokal-music/lokal-mobile'", text)
 
     def test_update_api_and_native_apk_validator(self):
@@ -29,8 +29,11 @@ class RenamedRepositoryContract(unittest.TestCase):
         kotlin = read(
             "android/app/src/main/kotlin/com/mossapps/flick/LokalAppUpdater.kt"
         )
-        self.assertIn("static const _repo = 'lokal-music/Mobile';", dart)
+        self.assertIn("static const _androidRepo = 'Zachhambo/lokal-mobile';", dart)
+        self.assertIn("static const _iosRepo = 'lokal-music/Mobile';", dart)
+        self.assertIn("https://github.com/Zachhambo/lokal-mobile/releases", dart)
         self.assertIn("https://github.com/lokal-music/Mobile/releases", dart)
+        self.assertIn("'zachhambo/lokal-mobile'", dart)
         self.assertIn("'lokal-music/mobile'", dart)
         self.assertIn("'lokal-music/lokal-mobile'", dart)
         self.assertIn('"lokal-music/mobile"', kotlin)
@@ -38,14 +41,33 @@ class RenamedRepositoryContract(unittest.TestCase):
         self.assertIn('"lokal-konnekt/lokal-mobile"', kotlin)
 
     def test_outbound_release_and_desktop_links(self):
-        self.assertIn("/repos/lokal-music/Mobile/releases/tags/",
-            read("lib/features/whats_new/data/lokal_minor_release_notes.dart"))
-        self.assertIn("https://github.com/lokal-music/Mobile/releases",
+        release_notes = read("lib/features/whats_new/data/lokal_minor_release_notes.dart")
+        self.assertIn("? 'lokal-music/Mobile'", release_notes)
+        self.assertIn(": 'Zachhambo/lokal-mobile'", release_notes)
+        self.assertIn("https://github.com/Zachhambo/lokal-mobile/releases",
             read("lib/features/settings/lokal/groups/about_group.dart"))
         self.assertIn("https://github.com/lokal-music/Desktop",
             read("README.md"))
-        self.assertIn("https://github.com/lokal-music/Mobile/releases",
+        self.assertIn("https://github.com/Zachhambo/lokal-mobile/releases",
             read("README.md"))
+
+    def test_android_release_target_does_not_change_ios_release_target(self):
+        release_tool = read("tool/platform_releases.py")
+        self.assertIn(
+            "os.environ.get('LOKAL_RELEASE_REPO', 'lokal-music/mobile')",
+            release_tool,
+        )
+        self.assertIn(
+            "LOKAL_RELEASE_REPO: Zachhambo/lokal-mobile",
+            read(".github/workflows/android-release.yml"),
+        )
+        ios_source = read("tool/ios_store_distribution.py")
+        self.assertIn("REPO = 'lokal-music/mobile'", ios_source)
+        ios_updates = read("lib/features/updates/ios_store_update_actions.dart")
+        self.assertIn(
+            "github.com/lokal-music/mobile/releases/download/ios",
+            ios_updates,
+        )
 
     def test_builtin_radio_catalog_follows_renamed_desktop(self):
         self.assertIn(

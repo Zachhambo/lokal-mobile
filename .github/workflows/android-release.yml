@@ -35,7 +35,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   prepare:
-    if: github.repository == 'lokal-music/Mobile'
+    if: github.repository == 'Zachhambo/lokal-mobile'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -57,6 +57,7 @@ jobs:
         id: published
         env:
           GH_TOKEN: ${{ github.token }}
+          LOKAL_RELEASE_REPO: Zachhambo/lokal-mobile
         run: python3 tool/platform_releases.py metadata --platform android
       - name: Calculate version and pin this commit
         id: metadata
@@ -140,6 +141,7 @@ jobs:
       - name: Update the Android release
         env:
           GH_TOKEN: ${{ github.token }}
+          LOKAL_RELEASE_REPO: Zachhambo/lokal-mobile
         run: |
           python3 tool/platform_releases.py publish --platform android --assets release \
             --sha "$GITHUB_SHA" --notes "$RUNNER_TEMP/mobile-release-notes.md"

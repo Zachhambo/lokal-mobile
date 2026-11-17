@@ -243,7 +243,7 @@ class _LokalUpdateSheetState extends ConsumerState<LokalUpdateSheet>
                     Uri.parse(
                       release?.pageUrl ??
                           (_forIos
-                              ? '$lokalUpdateReleasesUrl/tag/ios'
+                              ? '$lokalIosUpdateReleasesUrl/tag/ios'
                               : lokalUpdateReleasesUrl),
                     ),
                     mode: LaunchMode.externalApplication,

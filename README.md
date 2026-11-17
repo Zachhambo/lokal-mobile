@@ -4,7 +4,7 @@ HTTP Lossless Addon Link by [Heisenberg](https://github.com/Vishnuuu-s1):
 <p align="center"><img src="docs/images/hero.png" alt="Lokal Mobile — Your music. Everywhere you go." width="100%"></p>
 
 <p align="center">
-  <a href="https://github.com/lokal-music/Mobile/releases/tag/android"><img alt="Download Android" src="https://img.shields.io/badge/download-Android-65e2ce?style=flat-square&labelColor=0b1318"></a>
+  <a href="https://github.com/Zachhambo/lokal-mobile/releases/tag/android"><img alt="Download Android" src="https://img.shields.io/badge/download-Android-65e2ce?style=flat-square&labelColor=0b1318"></a>
   <img alt="Android 8.0 and later" src="https://img.shields.io/badge/Android-8.0%2B-65e2ce?style=flat-square&labelColor=0b1318">
   <img alt="64-bit ARM phones" src="https://img.shields.io/badge/Phones-64--bit_ARM-65e2ce?style=flat-square&labelColor=0b1318">
   <a href="LICENSE"><img alt="GPL-3.0 license" src="https://img.shields.io/badge/license-GPL--3.0-65e2ce?style=flat-square&labelColor=0b1318"></a>
@@ -15,10 +15,10 @@ HTTP Lossless Addon Link by [Heisenberg](https://github.com/Vishnuuu-s1):
 No Lokal account is needed to play local files. Your library and listening history live on your device; online discovery, lyrics, artwork and account integrations are optional.
 
 <p align="center">
-  <a href="https://github.com/lokal-music/Mobile/releases/tag/android"><b>Android download</b></a> ·
+  <a href="https://github.com/Zachhambo/lokal-mobile/releases/tag/android"><b>Android download</b></a> ·
   <a href="https://github.com/lokal-music/Mobile/releases/tag/ios"><b>iPhone download</b></a> ·
-  <a href="https://github.com/lokal-music/Mobile/actions/workflows/android-nightly.yml">Nightly builds</a> ·
-  <a href="https://github.com/lokal-music/Mobile/issues">Report an issue</a> ·
+  <a href="https://github.com/Zachhambo/lokal-mobile/actions/workflows/android-nightly.yml">Nightly builds</a> ·
+  <a href="https://github.com/Zachhambo/lokal-mobile/issues">Report an issue</a> ·
   <a href="docs/BUILD.md">Build from source</a> ·
   <a href="https://github.com/lokal-music/Desktop">Lokal for desktop</a>
 </p>
@@ -91,7 +91,7 @@ Optional integrations include Last.fm and ListenBrainz scrobbling, network music
 
 ## Install and update
 
-1. Open [Releases](https://github.com/lokal-music/Mobile/releases) and choose stable or nightly.
+1. Open [Releases](https://github.com/Zachhambo/lokal-mobile/releases) and choose stable or nightly.
 2. Download **`Lokal-<version>-arm64.apk`** (the full build). The optional Play variant adds `-Play` to its name. Each APK is built for **64-bit ARM phones** to reduce download size. 32-bit-only phones and x86 Android emulators are not supported; existing compatible installations can update in place with the same signing key.
 3. Allow your browser/file manager to install the APK, then choose your music folders from Library settings.
 
@@ -114,7 +114,7 @@ Both flows generate their own mobile banner, changelog, signed APKs, certificate
 
 Start with [BUILD.md](docs/BUILD.md) for the pinned Flutter, Rust and Android toolchain. The internal Dart package (`flick`) and Android application ID remain stable for compatibility and existing installations; the product is **Lokal Mobile**.
 
-When reporting playback or UI problems, include your phone, Android version, installed build, source/file format and relevant in-app logs. Remove cookies, tokens and pairing secrets before sharing logs. [Open an issue](https://github.com/lokal-music/Mobile/issues) or send a pull request with a focused explanation of the change.
+When reporting playback or UI problems, include your phone, Android version, installed build, source/file format and relevant in-app logs. Remove cookies, tokens and pairing secrets before sharing logs. [Open an issue](https://github.com/Zachhambo/lokal-mobile/issues) or send a pull request with a focused explanation of the change.
 
 ## License and credits
 
