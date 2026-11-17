@@ -108,6 +108,7 @@ final globalSearchResultsProvider =
     final rel =
         s.relativeFolderPath ??
         SongsState.extractRelativeSubfolder(s.folderUri, s.filePath);
+    if (rel.isEmpty) continue;
     final folderUri = s.folderUri ?? '';
     String name;
     String key;

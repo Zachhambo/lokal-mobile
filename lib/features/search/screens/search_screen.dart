@@ -62,8 +62,15 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   Timer? _debounce;
   late String _debouncedQuery = widget.initialQuery?.trim() ?? '';
   final Map<SearchCategory, bool> _expanded = {};
+  String? _manuallySelectedCategoryQuery;
 
   static const int _previewLimit = 4;
+  static const _primaryResultCategories = [
+    SearchCategory.songs,
+    SearchCategory.artists,
+    SearchCategory.albums,
+    SearchCategory.folders,
+  ];
 
   @override
   void initState() {
@@ -164,6 +171,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         enabled.singleOrNull != SearchCategory.lyrics
         ? ref.watch(globalSearchResultsProvider(repoQuery))
         : null;
+    final searchResults = resultsAsync?.value;
+    if (searchResults != null) {
+      _scheduleCategoryAutoSelection(searchResults, enabled);
+    }
+    final visibleCategories = searchResults == null
+        ? enabled
+        : _visibleCategories(searchResults, enabled);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -211,12 +225,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               builder: (context) {
                 final counts = resultsAsync?.value?.counts;
                 return SearchFilterChips(
-                  enabled: enabled,
+                  enabled: visibleCategories,
                   scope: scope,
                   onScopeChanged: (value) =>
                       ref.read(searchScopeProvider.notifier).select(value),
-                  onToggle: (cat) =>
-                      ref.read(searchFilterProvider.notifier).toggle(cat),
+                  onToggle: (cat) {
+                    _manuallySelectedCategoryQuery = repoQuery;
+                    ref.read(searchFilterProvider.notifier).toggle(cat);
+                  },
                   counts: counts,
                   query: repoQuery,
                 );
@@ -259,13 +275,61 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       context,
                       hasQuery: hasQuery,
                       resultsAsync: resultsAsync,
-                      enabled: enabled,
+                      enabled: visibleCategories,
                     ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Set<SearchCategory> _visibleCategories(
+    GlobalSearchResults results,
+    Set<SearchCategory> selected,
+  ) {
+    if (results.query != _debouncedQuery ||
+        _manuallySelectedCategoryQuery == results.query) {
+      return selected;
+    }
+    final populated = _primaryResultCategories
+        .where(results.hasResultsFor)
+        .toList();
+    if (populated.length == 1) return {populated.single};
+    final total = _primaryResultCategories.fold<int>(
+      0,
+      (count, category) => count + results.countFor(category),
+    );
+    if (populated.length > 1 && total <= 5) {
+      return _primaryResultCategories.toSet();
+    }
+    return selected;
+  }
+
+  void _scheduleCategoryAutoSelection(
+    GlobalSearchResults results,
+    Set<SearchCategory> selected,
+  ) {
+    if (results.query != _debouncedQuery ||
+        _manuallySelectedCategoryQuery == results.query) {
+      return;
+    }
+    final populated = _primaryResultCategories
+        .where(results.hasResultsFor)
+        .toList();
+    if (populated.length != 1 || selected.singleOrNull == populated.single) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _debouncedQuery != results.query ||
+          _manuallySelectedCategoryQuery == results.query ||
+          ref.read(searchFilterProvider).singleOrNull !=
+              selected.singleOrNull) {
+        return;
+      }
+      ref.read(searchFilterProvider.notifier).select(populated.single);
+    });
   }
 
   Widget _buildResultsArea(
@@ -307,7 +371,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     child: _buildNoResults(context, results.query),
                   ),
                 ),
-              if (_onlineSection(results.query) case final online?) online,
+                if (_onlineSection(
+                      results.query,
+                      category: enabled.singleOrNull,
+                    )
+                    case final online?)
+                  online,
               const SliverToBoxAdapter(child: SizedBox(height: 120)),
             ],
           );
@@ -539,6 +608,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     Set<SearchCategory> enabled,
   ) {
     final slivers = <Widget>[];
+    final primaryResultCount = _primaryResultCategories.fold<int>(
+      0,
+      (total, category) => total + results.countFor(category),
+    );
+    final compact = enabled.length > 1 &&
+        _primaryResultCategories.containsAll(enabled) &&
+        primaryResultCount <= 5;
     void addSection({
       required SearchCategory cat,
       required int count,
@@ -546,13 +622,15 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     }) {
       if (!enabled.contains(cat) || count == 0) return;
       final expanded = _isExpanded(cat);
-      final showSeeAll = enabled.length != 1 && count > _previewLimit;
+      final showSeeAll =
+          !compact && enabled.length != 1 && count > _previewLimit;
       slivers.add(
         _SectionHeader(
           category: cat,
           count: count,
           showSeeAll: showSeeAll,
           expanded: expanded,
+          compact: compact,
           onToggle: () => _toggleExpanded(cat),
         ),
       );
@@ -757,7 +835,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       key: _resultsScrollKey(enabled),
       slivers: [
         ...slivers,
-        if (_onlineSection(results.query) case final online?) online,
+        if (_onlineSection(results.query, category: enabled.singleOrNull)
+            case final online?)
+          online,
         const SliverToBoxAdapter(child: SizedBox(height: 120)),
       ],
     );
@@ -766,9 +846,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   Key _resultsScrollKey(Set<SearchCategory> enabled) =>
       ValueKey('${enabled.singleOrNull}:${ref.read(searchScopeProvider)}');
 
-  Widget? _onlineSection(String query) {
+  Widget? _onlineSection(String query, {SearchCategory? category}) {
     if (ref.read(searchScopeProvider) == SearchScope.library) return null;
-    final category = ref.read(searchFilterProvider).singleOrNull;
+    category ??= ref.read(searchFilterProvider).singleOrNull;
     if (!supportsOnlineCategory(category)) return null;
     if (category == SearchCategory.lyrics) {
       return SliverToBoxAdapter(
@@ -853,6 +933,7 @@ class _SectionHeader extends StatelessWidget {
   final int count;
   final bool showSeeAll;
   final bool expanded;
+  final bool compact;
   final VoidCallback onToggle;
 
   const _SectionHeader({
@@ -860,11 +941,33 @@ class _SectionHeader extends StatelessWidget {
     required this.count,
     required this.showSeeAll,
     required this.expanded,
+    this.compact = false,
     required this.onToggle,
   });
 
   @override
   Widget build(BuildContext context) {
+    if (compact) {
+      return SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppConstants.spacingLg,
+            AppConstants.spacingSm,
+            AppConstants.spacingLg,
+            2,
+          ),
+          child: Text(
+            category.label,
+            style: TextStyle(
+              fontFamily: 'GoogleSansFlex',
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: context.adaptiveTextTertiary,
+            ),
+          ),
+        ),
+      );
+    }
     return SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(

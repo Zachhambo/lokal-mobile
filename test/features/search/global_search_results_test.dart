@@ -62,10 +62,19 @@ const b = Song(
   duration: Duration(minutes: 3),
   fileType: 'FLAC',
 );
+const rootFolderSong = Song(
+  id: '3',
+  title: 'Root track',
+  artist: 'Delta',
+  duration: Duration(minutes: 3),
+  fileType: 'FLAC',
+  folderUri: '/Music',
+  relativeFolderPath: '',
+);
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
   test('artists, albums, folders, year and playlists use the right entities and refresh live', () async {
-    final library = _Library([a, b]);
+    final library = _Library([a, b, rootFolderSong]);
     final repo = _Repo();
     final lists = _Playlists();
     final c = ProviderContainer(
@@ -96,6 +105,10 @@ void main() {
           .single
           .songs,
       [a],
+    );
+    expect(
+      (await c.read(globalSearchResultsProvider('Music').future)).folders,
+      isEmpty,
     );
     expect(
       (await c.read(globalSearchResultsProvider('2024').future)).yearMatches,

@@ -112,6 +112,10 @@ void main() {
         SearchCategory.albums,
         SearchCategory.lyrics,
       ]);
+      expect(localSearchCategories, [
+        ...visibleSearchCategories,
+        SearchCategory.folders,
+      ]);
       scope.select(SearchScope.online);
       for (final category in visibleSearchCategories) {
         f.select(category);
@@ -126,6 +130,17 @@ void main() {
       expect(c.read(searchFilterProvider), {SearchCategory.songs});
     },
   );
+  test('Folders is selectable locally and falls back to Songs online', () {
+    final c = ProviderContainer();
+    addTearDown(c.dispose);
+    final filter = c.read(searchFilterProvider.notifier);
+    filter.select(SearchCategory.folders);
+    expect(c.read(searchFilterProvider), {SearchCategory.folders});
+    c.read(searchScopeProvider.notifier).select(SearchScope.online);
+    expect(c.read(searchFilterProvider), {SearchCategory.songs});
+    filter.select(SearchCategory.folders);
+    expect(c.read(searchFilterProvider), {SearchCategory.songs});
+  });
   testWidgets(
     'category and scope controls respond directly on a narrow phone',
     (tester) async {

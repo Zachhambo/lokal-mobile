@@ -16,8 +16,21 @@ const visibleSearchCategories = [
   SearchCategory.lyrics,
 ];
 
+const localSearchCategories = [
+  ...visibleSearchCategories,
+  SearchCategory.folders,
+];
+
 bool supportsOnlineCategory(SearchCategory? category) =>
     category != null && visibleSearchCategories.contains(category);
+
+bool supportsLocalCategory(SearchCategory? category) =>
+    category != null && localSearchCategories.contains(category);
+
+bool _supportsCategoryInScope(SearchCategory? category, SearchScope scope) =>
+    scope == SearchScope.online || scope == SearchScope.soulseek
+    ? supportsOnlineCategory(category)
+    : supportsLocalCategory(category);
 
 /// iPhone uses the bundled client while foreground; UIKit cancels its peer
 /// session in the background. Android retains its foreground service.
@@ -49,7 +62,16 @@ class SearchScopeNotifier extends Notifier<SearchScope> {
       final scope = SearchScope.values
           .where((s) => s.name == saved)
           .firstOrNull;
-      if (scope != null) state = _availableScope(scope);
+      if (scope != null) {
+        final available = _availableScope(scope);
+        if (!_supportsCategoryInScope(
+          ref.read(searchFilterProvider).singleOrNull,
+          available,
+        )) {
+          ref.read(searchFilterProvider.notifier).select(SearchCategory.songs);
+        }
+        state = available;
+      }
     } catch (_) {
       // Keep Search usable when saved preferences are unavailable.
     }
@@ -95,7 +117,9 @@ class SearchFilterNotifier extends Notifier<Set<SearchCategory>> {
       final category = stored == null
           ? null
           : SearchCategoryX.fromStorageKey(stored);
-      if (supportsOnlineCategory(category)) state = {category!};
+      if (_supportsCategoryInScope(category, ref.read(searchScopeProvider))) {
+        state = {category!};
+      }
     } catch (_) {
       /* Search remains usable if preference storage fails. */
     }
@@ -103,7 +127,10 @@ class SearchFilterNotifier extends Notifier<Set<SearchCategory>> {
 
   void select(SearchCategory? category) {
     _changed = true;
-    final selected = supportsOnlineCategory(category)
+    final selected = _supportsCategoryInScope(
+      category,
+      ref.read(searchScopeProvider),
+    )
         ? category!
         : SearchCategory.songs;
     state = {selected};
