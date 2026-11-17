@@ -4897,6 +4897,31 @@ class PlayerService {
     await _showFloatingPlayerOverlay();
   }
 
+  /// Follow a receiver-owned queue occurrence without restarting its audio.
+  /// The index and id together distinguish repeated recordings in a playlist.
+  Future<void> followCastPlaylistTrack(
+    int index,
+    String trackId, {
+    required Duration position,
+    required bool playing,
+  }) => _enqueuePlaybackRequest(() async {
+    if (!_castingService.isActive ||
+        index < 0 ||
+        index >= _playlist.length ||
+        _playlist[index].id != trackId)
+      return;
+    final song = _playlist[index];
+    _setCurrentIndex(index);
+    currentSongNotifier.value = song;
+    _playbackManager.updateTrack(song);
+    _consumeQueueEntryAt(index);
+    durationNotifier.value = song.duration;
+    positionNotifier.value = position;
+    isPlayingNotifier.value = playing;
+    _updatePriorityAnchor();
+    await _updateNotificationState();
+  }, remoteOutput: true);
+
   /// The receiver owns its clock. Its completion bypasses the paused local
   /// engine's gapless/crossfade flags and advances the logical queue once.
   Future<void> castTrackFinished(String trackId, String loadId) =>
@@ -10069,3 +10094,4 @@ class _ShuffleBoolNotifier extends ValueNotifier<bool> {
     super.dispose();
   }
 }
+

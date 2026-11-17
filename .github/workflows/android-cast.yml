@@ -43,6 +43,8 @@ jobs:
         run: |
           python3 -m pip install --disable-pip-version-check Pillow
           python3 tool/gen_lokal_launcher_icons.py
+      - name: Analyze casting and player integration
+        run: flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings lib/services/casting lib/services/player_service.dart lib/features/settings/screens/casting_settings_screen.dart
       - name: Verify confirmed handoff, SAF staging and receiver HTTP requests
         run: flutter test --no-pub test/services/remote_notification_duration_test.dart test/services/casting test/features/player/playback_output_picker_test.dart test/features/player/full_player_header_test.dart test/features/player/full_player_library_action_test.dart test/services/player_volume_control_test.dart
       - name: Compile Android sender and verify native acknowledgement lifecycle
@@ -54,3 +56,4 @@ jobs:
           name: android-cast-tests
           path: build/app/reports/tests/testFullDebugUnitTest
           if-no-files-found: ignore
+

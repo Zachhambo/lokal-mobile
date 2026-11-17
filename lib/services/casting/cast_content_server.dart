@@ -21,6 +21,26 @@ class CastContentServer {
   final Map<String, ContentType> _types = {};
   final _rand = Random.secure();
 
+  bool ownsUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (_server == null || uri == null || uri.port != _server!.port)
+      return false;
+    final token = uri.pathSegments.firstOrNull;
+    return _paths.containsKey(token) || _relays.containsKey(token);
+  }
+
+  /// Retain only the receiver's current queue window, including its covers.
+  /// Already-open file responses hold their own handles until they finish.
+  void retainUrls(Iterable<String> urls) {
+    final tokens = {
+      for (final url in urls)
+        if (ownsUrl(url)) Uri.parse(url).pathSegments.first,
+    };
+    _paths.removeWhere((token, _) => !tokens.contains(token));
+    _relays.removeWhere((token, _) => !tokens.contains(token));
+    _types.removeWhere((token, _) => !tokens.contains(token));
+  }
+
   /// Serve [filePath] and return a LAN-reachable URL for it.
   Future<String> serve(
     String filePath, {
