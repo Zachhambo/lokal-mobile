@@ -1431,6 +1431,9 @@ class CastingService {
             }),
           );
         }
+      } catch (error) {
+        if (current())
+          errorNotifier.value = 'Could not refresh receiver status: $error';
       } finally {
         _dlnaPollBusy = false;
       }
@@ -1679,7 +1682,10 @@ class CastingService {
           _dlnaItems.add(item);
         }
       } else {
-        final next = repeatOne ? _dlnaItems.firstOrNull : ready.firstOrNull;
+        var next = repeatOne ? _dlnaItems.firstOrNull : ready.firstOrNull;
+        // Generic SetNext has no occurrence id. Identical adjacent URLs
+        // advance through confirmed completion instead of becoming a loop.
+        if (!repeatOne && next?.url == _dlnaReceiverUri) next = null;
         try {
           await _dlna.nextUri(control, next?.url ?? '', next?.meta ?? '');
           final playing = _dlnaItems
