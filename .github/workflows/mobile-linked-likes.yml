@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'lib/services/link/link_journal.dart'
+      - 'lib/services/link/link_sync_coordinator.dart'
       - 'lib/services/link/link_favorite_snapshot.dart'
       - 'lib/services/favorites_service.dart'
       - 'test/services/link/link_favorite_snapshot_test.dart'
@@ -11,6 +12,7 @@ on:
     branches: [main]
     paths:
       - 'lib/services/link/link_journal.dart'
+      - 'lib/services/link/link_sync_coordinator.dart'
       - 'lib/services/link/link_favorite_snapshot.dart'
       - 'lib/services/favorites_service.dart'
       - 'test/services/link/link_favorite_snapshot_test.dart'
@@ -40,6 +42,7 @@ jobs:
           flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings
           lib/services/link/link_favorite_snapshot.dart
           lib/services/link/link_journal.dart
+          lib/services/link/link_sync_coordinator.dart
           lib/services/favorites_service.dart
       - name: Verify online-only favorites and sync metadata
         run: >-
