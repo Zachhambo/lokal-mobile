@@ -97,7 +97,7 @@ struct LokalWidgetView: View {
       if large { brand }
       if small {
         HStack {
-          cover(track.artwork ?? model.lastArtwork)
+          cover(track.artwork)
             .frame(width: compact ? 36 : 48, height: compact ? 36 : 48)
           Spacer()
           Image(systemName: model.isPlaying ? "waveform" : "opticaldisc")
@@ -107,7 +107,7 @@ struct LokalWidgetView: View {
       } else {
         HStack(spacing: 12) {
           if !compact {
-            cover(track.artwork ?? model.lastArtwork)
+            cover(track.artwork)
               .frame(width: large ? 120 : 62, height: large ? 120 : 62)
           }
           VStack(alignment: .leading, spacing: 5) {

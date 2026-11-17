@@ -156,7 +156,7 @@ class IosWidgetActions {
       }
       // Persist failed attempts across attachments so an unavailable provider
       // cannot keep an unexpiring Flow command in the native inbox forever.
-      final retryId = command.id ?? raw;
+      final retryId = raw;
       final failures = prefs.getStringList(retryKey) ?? const <String>[];
       if (failures.where((id) => id == retryId).length >= maxAttempts)
         return true;
@@ -169,20 +169,40 @@ class IosWidgetActions {
         );
         rethrow;
       }
-      if (failures.contains(retryId)) {
-        await prefs.setStringList(
-          retryKey,
-          failures.where((id) => id != retryId).toList(),
-        );
-      }
+      // A newer successful playback intent wins over earlier failed playback
+      // intents. Navigation does not cancel work the user still wants retried.
+      final superseded = const {'open', 'queue'}.contains(command.action)
+          ? <String>{}
+          : failures.where((failedRaw) {
+              final failed = IosWidgetCommand.parse(failedRaw);
+              return failed != null &&
+                  !const {'open', 'queue'}.contains(failed.action);
+            }).toSet();
+      final remaining = failures
+          .where(
+            (failedRaw) =>
+                failedRaw != retryId && !superseded.contains(failedRaw),
+          )
+          .toList();
+      final retiredIds = superseded
+          .map((failedRaw) => IosWidgetCommand.parse(failedRaw)?.id)
+          .whereType<String>()
+          .where((id) => id != command.id)
+          .toSet();
       if (command.id != null) {
         await prefs.setStringList(
           receiptKey,
           [
             command.id!,
-            ...receipts.where((id) => id != command.id),
+            ...retiredIds,
+            ...receipts.where(
+              (id) => id != command.id && !retiredIds.contains(id),
+            ),
           ].take(64).toList(),
         );
+      }
+      if (remaining.length != failures.length) {
+        await prefs.setStringList(retryKey, remaining);
       }
       return true;
     });

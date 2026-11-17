@@ -326,4 +326,53 @@ void main() {
       expect(acknowledged, isEmpty);
     },
   );
+  test(
+    'newer Pause retires failed Play even across a later attachment',
+    () async {
+      const channel = MethodChannel('test/superseded-widget-actions');
+      final play = link('play', track: alias);
+      final pause = link(
+        'pause',
+        track: alias,
+        id: '22345678-1234-1234-1234-123456789abc',
+      );
+      final pending = <String>[play, pause];
+      final executed = <String>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'takePendingActions')
+          return List<String>.of(pending);
+        if (call.method == 'acknowledgeAction') pending.remove(call.arguments);
+        return null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      IosWidgetActions createHandler() => IosWidgetActions(
+        channel: channel,
+        currentAlias: () => alias,
+        clock: () => now,
+        onStale: () async {},
+        execute: (command) async {
+          executed.add(command.action);
+          if (command.action == 'play') throw StateError('Play unavailable');
+        },
+      );
+      final first = createHandler();
+      await first.drain();
+      expect(executed, ['play', 'pause']);
+      expect(pending, [play]);
+      await first.dispose();
+      final resumed = createHandler();
+      await resumed.drain();
+      expect(executed, ['play', 'pause']);
+      expect(pending, isEmpty);
+      expect(
+        (await SharedPreferences.getInstance()).getStringList(
+          IosWidgetActions.retryKey,
+        ),
+        isEmpty,
+      );
+      await resumed.dispose();
+    },
+  );
 }
