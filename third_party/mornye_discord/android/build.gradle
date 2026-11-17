@@ -5,7 +5,8 @@ apply plugin: 'com.android.library'
 // AGP 9 built-in Kotlin, matching the host application.
 
 def sdkRoot = file('../sdk')
-def sdkEnabled = new File(sdkRoot, 'discord_partner_sdk.aar').isFile()
+def sdkEnabled = System.getenv('LOKAL_DISABLE_DISCORD_SDK') != 'true' &&
+        new File(sdkRoot, 'discord_partner_sdk.aar').isFile()
 if (sdkEnabled && !new File(sdkRoot, 'notices/Discord-License-Notices.txt').isFile()) {
     throw new GradleException('Discord SDK license notices are missing. Run tool/setup_discord_sdk.py.')
 }

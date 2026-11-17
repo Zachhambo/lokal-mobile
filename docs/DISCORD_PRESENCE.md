@@ -6,19 +6,13 @@ installed Discord app's signed-in session. No client secret, bot token, user
 token or public verification key is required. Attribution and the MIT license
 are in `third_party/mornye_discord` and `THIRD_PARTY_NOTICES.md`.
 
-## Repository beta/release builds
+## Signed release builds
 
-The verified SDK 1.10.19337 is stored as an AES-256 encrypted archive under
-`third_party/discord`. One repository Actions secret is required:
-**`LOKAL_DISCORD_SDK_PASSPHRASE`**. Set its value to the separately delivered
-archive key in GitHub **Settings → Secrets and variables → Actions → New
-repository secret**. Never commit the key.
-
-Both signed beta and release workflows decrypt and hash-check the SDK before
-building. Missing/wrong keys fail early. APK packaging also requires the native
-Discord bridge, vendor library for both ARM ABIs, and both license notices, so a
-published build cannot silently omit Discord. Pull-request checks receive no key
-and continue using the SDK-free configuration.
+The personal Android fork intentionally disables Discord Rich Presence in
+signed release builds. The release builder sets `LOKAL_DISABLE_DISCORD_SDK`,
+does not decrypt or stage the SDK, and verifies that the APK contains none of
+the Discord SDK native libraries or vendor license assets. The app's Discord
+setting reports the feature as unavailable; music playback is unaffected.
 
 ## Manual local setup
 
@@ -48,11 +42,11 @@ and continue using the SDK-free configuration.
    Forks can override the public ID with
    `--dart-define=LOKAL_DISCORD_APPLICATION_ID=<their application ID>`.
    Release signing and the existing Android/Rust build prerequisites still apply.
-   Release automation uses the encrypted archive and Actions secret above.
-   Local builds can stage the extracted files as shown; never commit unencrypted
-   SDK files or local paths. The staging script verifies the pinned SDK file hashes and
-   packages Discord's required license notices. Enabled SDK builds fail if a
-   requested ABI is missing, rather than shipping a silently broken ABI.
+   The signed release workflow always disables the SDK. Local builds can stage
+   the extracted files as shown; the staging script verifies the pinned SDK
+   file hashes and packages Discord's required license notices. Enabled SDK
+   builds fail if a requested ABI is missing, rather than shipping a silently
+   broken ABI.
 
 5. Install Discord and sign in on the phone. Enable activity sharing in Discord
    as needed, then enable **Settings → Data → Accounts → Discord Rich

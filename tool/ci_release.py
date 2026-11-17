@@ -129,13 +129,16 @@ def package_apk(apk, destination, flavor, version, code, env, certificate):
         packaged_abis = {entry.split("/")[1] for entry in native_entries}
         if packaged_abis != {"arm64-v8a"}:
             raise ValueError(f"APK must contain only arm64-v8a native libraries: {sorted(packaged_abis)}")
-        for library in ("librust_lib_flick_player.so", "libflutter.so", "libapp.so",
-                        "libmornye_discord.so", "libdiscord_partner_sdk.so"):
+        for library in ("librust_lib_flick_player.so", "libflutter.so", "libapp.so"):
             if f"lib/arm64-v8a/{library}" not in archive.namelist():
                 raise ValueError(f"APK is missing arm64-v8a/{library}")
-        for notice in ("Discord-License-Notices.txt", "Mornye-Discord-Bridge-License.txt"):
-            if f"assets/{notice}" not in archive.namelist():
-                raise ValueError(f"APK is missing {notice}")
+        for library in ("libmornye_discord.so", "libdiscord_partner_sdk.so"):
+            if f"lib/arm64-v8a/{library}" in archive.namelist():
+                raise ValueError(f"APK unexpectedly includes {library}; Discord is disabled for releases")
+        if "assets/Discord-License-Notices.txt" in archive.namelist():
+            raise ValueError("APK unexpectedly includes Discord SDK license assets")
+        if "assets/Mornye-Discord-Bridge-License.txt" not in archive.namelist():
+            raise ValueError("APK is missing Mornye-Discord-Bridge-License.txt")
     destination.mkdir(exist_ok=True)
     variant = "-Play" if flavor == "play" else ""
     name = f"Lokal-{version}{variant}-arm64.apk"
@@ -151,7 +154,7 @@ def package_apk(apk, destination, flavor, version, code, env, certificate):
         "commit": env.get("GITHUB_SHA"), "run_id": env.get("GITHUB_RUN_ID"),
         "run_attempt": env.get("GITHUB_RUN_ATTEMPT"),
         "flutter": "3.47.1", "dart": "3.13.1", "rust": "1.98.0",
-        "ndk": "28.2.13676358", "discordSocialSdk": "1.10.19337",
+        "ndk": "28.2.13676358", "discordRichPresence": False,
     }, indent=2) + "\n")
 
 
@@ -166,6 +169,7 @@ def build():
     if apk.exists():
         raise ValueError("Refusing to reuse an existing release APK; start from a clean checkout")
     with signing_material(env, signing_directory()) as child_env:
+        child_env["LOKAL_DISABLE_DISCORD_SDK"] = "true"
         certificate = hashlib.sha256(subprocess.check_output([
             "keytool", "-exportcert", "-keystore", child_env["ANDROID_KEYSTORE_PATH"],
             "-alias", child_env["ANDROID_KEY_ALIAS"],

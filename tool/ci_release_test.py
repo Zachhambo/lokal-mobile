@@ -145,11 +145,9 @@ class PackagingTests(unittest.TestCase):
     def write_apk(self, abis=("arm64-v8a",)):
         with zipfile.ZipFile(self.apk, "w") as archive:
             for abi in abis:
-                for library in ("librust_lib_flick_player.so", "libflutter.so", "libapp.so",
-                                "libmornye_discord.so", "libdiscord_partner_sdk.so"):
+                for library in ("librust_lib_flick_player.so", "libflutter.so", "libapp.so"):
                     archive.writestr(f"lib/{abi}/{library}", "fixture")
-            for notice in ("Discord-License-Notices.txt", "Mornye-Discord-Bridge-License.txt"):
-                archive.writestr(f"assets/{notice}", "fixture notice")
+            archive.writestr("assets/Mornye-Discord-Bridge-License.txt", "fixture notice")
 
     def package(self):
         release.package_apk(self.apk, self.dest, "full", "0.1.0-alpha.1", 23, self.env, self.signer)
@@ -168,6 +166,25 @@ class PackagingTests(unittest.TestCase):
         import json
         metadata = json.loads((self.dest / "full-metadata.json").read_text())
         self.assertEqual(metadata["abis"], ["arm64-v8a"])
+        self.assertFalse(metadata["discordRichPresence"])
+
+    def test_discord_sdk_native_library_is_rejected(self):
+        self.write_apk()
+        with zipfile.ZipFile(self.apk, "a") as archive:
+            archive.writestr("lib/arm64-v8a/libdiscord_partner_sdk.so", "fixture")
+        with patch.object(release.subprocess, "check_output", side_effect=self.outputs):
+            with self.assertRaisesRegex(ValueError, "Discord is disabled"):
+                self.package()
+        self.assertFalse(self.dest.exists())
+
+    def test_discord_sdk_license_assets_are_rejected(self):
+        self.write_apk()
+        with zipfile.ZipFile(self.apk, "a") as archive:
+            archive.writestr("assets/Discord-License-Notices.txt", "fixture notice")
+        with patch.object(release.subprocess, "check_output", side_effect=self.outputs):
+            with self.assertRaisesRegex(ValueError, "Discord SDK license assets"):
+                self.package()
+        self.assertFalse(self.dest.exists())
 
     def test_unsigned_apk_cannot_be_uploaded(self):
         self.write_apk()

@@ -48,23 +48,38 @@ published release stays published; the draft checkbox applies only to creation.
 The workflow refuses replacement if another actor moved the tag during the build.
 No replacement happens just by merging this PR.
 
-## Signing, updates and version codes
+## Personal-fork signing, updates and version codes
 
-Both channels keep the existing `com.lokalkonnekt.konnekted2` identity and the
-same permanent key. Existing signing secrets remain:
+Both channels keep the `com.lokalkonnekt.konnekted2` application identity and
+use the same personal-fork signing key. Generate a new key and configure the
+four GitHub Actions secrets with the existing helper (requires Java `keytool`
+and an authenticated GitHub CLI with repository-secret access):
+
+```powershell
+$keytool = (Get-Command keytool).Source
+python tool\setup_signing.py --directory "$env:USERPROFILE\.lokal-mobile-signing" --keytool $keytool --repo Zachhambo/lokal-mobile --upload
+```
+
+Back up both generated files in an encrypted location. Do not lose or replace
+this key: future fork APKs require it for compatible updates. Because the
+original app was signed by a different key, the first fork installation cannot
+update it in place; uninstall the original first (and back up any app-local
+data you need).
+
+Required Actions secrets:
 
 | Actions secret | Purpose |
 | --- | --- |
-| `ANDROID_KEYSTORE_BASE64` | Base64 of the backed-up permanent JKS/PKCS12 key |
+| `ANDROID_KEYSTORE_BASE64` | Base64 of the backed-up fork JKS key |
 | `ANDROID_KEYSTORE_PASSWORD` | Keystore password |
 | `ANDROID_KEY_ALIAS` | Signing alias |
 | `ANDROID_KEY_PASSWORD` | Key password |
-| `LOKAL_DISCORD_SDK_PASSPHRASE` | Unlock the pinned SDK bundle already used by releases |
 
-Never replace the key to fix a build. Signing files are ephemeral and removed
-on success/failure. APK signature, package, version, ARM64 ABI, required
-native libraries and notices are verified before upload. Each APK contains
-**arm64-v8a only**, with a checksum and non-secret certificate metadata.
+Signing files are ephemeral and removed on success/failure. APK signature,
+package, version, ARM64 ABI, required native libraries and notices are verified
+before upload. Discord SDK libraries are excluded and verified absent. Each APK
+contains **arm64-v8a only**, with a checksum and non-secret certificate
+metadata.
 
 Independent stable/nightly run counters must not be Android version codes.
 Both flows now share a UTC clock: `seconds since 2020-01-01 + 100000`, at least
