@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/services.dart';
+
 import '../sources/local_network_access.dart';
 import 'cast_lan_address.dart';
 
@@ -21,6 +23,14 @@ class CastContentServer {
   final Map<String, ContentType> _types = {};
   final _rand = Random.secure();
 
+  Future<void> syncStagingProtection() async {
+    if (!Platform.isAndroid) return;
+    await const MethodChannel('com.mossapps.flick/storage').invokeMethod<void>(
+      'setCastStagingPaths',
+      {'paths': _paths.values.toList()},
+    );
+  }
+
   bool ownsUrl(String url) {
     final uri = Uri.tryParse(url);
     if (_server == null || uri == null || uri.port != _server!.port)
@@ -39,6 +49,7 @@ class CastContentServer {
     _paths.removeWhere((token, _) => !tokens.contains(token));
     _relays.removeWhere((token, _) => !tokens.contains(token));
     _types.removeWhere((token, _) => !tokens.contains(token));
+    if (Platform.isAndroid) syncStagingProtection().catchError((Object _) {});
   }
 
   /// Serve [filePath] and return a LAN-reachable URL for it.
@@ -110,6 +121,8 @@ class CastContentServer {
     if (filePath != null) _paths[token] = filePath;
     if (remote != null) _relays[token] = remote;
     if (contentType != null) _types[token] = contentType;
+    await syncStagingProtection();
+    if (!current()) throw StateError('Cast session ended.');
     final safe = Uri.encodeComponent(
       filename.replaceAll(RegExp(r'[^A-Za-z0-9._\- ]'), ''),
     );
@@ -125,6 +138,7 @@ class CastContentServer {
     }
     _clients.clear();
     _types.clear();
+    await syncStagingProtection().catchError((Object _) {});
     final server = _server;
     _server = null;
     await server?.close(force: true);

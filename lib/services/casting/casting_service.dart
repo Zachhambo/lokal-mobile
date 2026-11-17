@@ -240,6 +240,7 @@ class CastingService {
     final ps = PlayerService();
     var selected = requested;
     var touched = false;
+    var claimed = false;
     var previousStopped = true;
     try {
       await ps.runOutputTransition((local) async {
@@ -262,6 +263,7 @@ class CastingService {
             await _loadDlnaSong(
               local.song!,
               autoplay: false,
+              prepareAhead: false,
               onReceiverTouched: () => touched = true,
             );
             if (local.position > Duration.zero)
@@ -274,10 +276,16 @@ class CastingService {
             if (touched) await _dlna.stop(selected.controlUrl!);
             _pollTimer?.cancel();
             _clearDlnaQueueState();
-            _releaseCastRemote();
+            if (!claimed) {
+              _activeDevice = null;
+              _currentSong = null;
+              if (local.isCurrent())
+                ps.isPlayingNotifier.value = local.wasPlaying;
+            }
             await CastContentServer.instance.stop();
           },
           claimRemote: () {
+            claimed = true;
             _claimCastRemote(selected, local.song, local.position, false);
             _selectDlnaRoute(selected);
           },
@@ -287,6 +295,13 @@ class CastingService {
             previousStopped && local.wasPlaying && local.song != null;
         ps.isPlayingNotifier.value = _dlnaWantPlay;
         _wasPlayingBeforeCast = local.wasPlaying;
+        unawaited(
+          _refreshDlnaQueue().catchError((Object error) {
+            if (identical(selected, _activeDevice))
+              errorNotifier.value =
+                  'Could not prepare the receiver queue: $error';
+          }),
+        );
         if (!previousStopped) errorNotifier.value = 'The previous receiver did not confirm Stop. This output is paused.';
         try {
           final v = await _dlna.deviceVolume(selected);
@@ -401,7 +416,9 @@ class CastingService {
     _pollTimer?.cancel();
     _pollTimer = null;
 
-    final wasPlaying = _wasPlayingBeforeCast;
+    final wasPlaying = leavingDlna
+        ? PlayerService().isPlayingNotifier.value
+        : _wasPlayingBeforeCast;
     _wasPlayingBeforeCast = false;
     final dev = _activeDevice!;
     currentCastLoadId = null;
@@ -1295,6 +1312,7 @@ class CastingService {
       if (song.isNetworkSource) {
         path = await RemoteSourceService.instance.ensureLocal(song);
       } else {
+        await CastContentServer.instance.syncStagingProtection();
         path = await castLocalFile(song.filePath, extension: song.fileType);
       }
       if (path == null || !(stillCurrent?.call() ?? true)) return null;
@@ -1468,6 +1486,7 @@ class CastingService {
   Future<void> _loadDlnaSong(
     Song song, {
     required bool autoplay,
+    bool prepareAhead = true,
     void Function()? onReceiverTouched,
   }) {
     final revision = ++_dlnaRevision;
@@ -1543,6 +1562,7 @@ class CastingService {
         _syncPreparationState();
         unawaited(PlayerService().refreshNotificationState());
       }
+      if (!prepareAhead) return;
       try {
         await _syncDlnaQueue(revision);
       } catch (error) {

@@ -19,6 +19,10 @@ An ordinary background transition is different from force-stop or the user's
 explicit quit policy: neither foreground services nor wake locks guarantee
 survival of a force-stop, reboot, or vendor task killer.
 
+Files exposed to a receiver are pinned in Android's SAF staging cache until
+they leave the active queue. Preparing later tracks cannot evict the current
+track or another queued file; pins are removed on queue pruning and disconnect.
+
 iPhone/iPad must use native AirPlay for phone-hosted audio to continue reliably
 with the screen locked. UPnP rejects phone-hosted audio there with an actionable
 message; iOS does not provide a general LAN-server background entitlement.
