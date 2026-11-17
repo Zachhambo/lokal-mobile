@@ -12,6 +12,9 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.media.AudioManager
+import android.net.wifi.WifiManager
+import android.content.pm.ServiceInfo
+import androidx.core.app.ServiceCompat
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -67,6 +70,8 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
 
     private var isForegroundServiceStarted = false
     private var wakeLock: PowerManager.WakeLock? = null
+    private var castWifiLock: WifiManager.WifiLock? = null
+    private var castBuffering = false
 
     private var currentTitle: String = "Unknown"
     private var currentArtist: String = "Unknown Artist"
@@ -237,10 +242,15 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
                 isCasting = it.getBooleanExtra("isCasting", false)
                 // Every new local/linked-PC selection must retire the prior
                 // native Cast session even if that caller predates this flag.
-                if (!isCasting) isNativeChromecast = false
+                if (!isCasting) {
+                    isNativeChromecast = false
+                    castBuffering = false
+                }
             }
             if (it.hasExtra("isNativeChromecast"))
                 isNativeChromecast = it.getBooleanExtra("isNativeChromecast", false)
+            if (it.hasExtra("castBuffering"))
+                castBuffering = isCasting && it.getBooleanExtra("castBuffering", false)
             if (it.hasExtra("isRemotePlayback")) isRemotePlayback = it.getBooleanExtra("isRemotePlayback", false)
             if (it.hasExtra("isLive")) isLive = it.getBooleanExtra("isLive", false)
             if (it.hasExtra("castDeviceName")) castDeviceName = it.getStringExtra("castDeviceName")
@@ -261,7 +271,7 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
         // metadata or doing any audio-focus work on the main thread.
         // This startup notification deliberately performs no disk or network I/O.
         if (!isForegroundServiceStarted) {
-            startForeground(NOTIFICATION_ID, buildStartupNotification())
+            promotePlaybackService(buildStartupNotification())
             isForegroundServiceStarted = true
         }
 
@@ -281,6 +291,7 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
         publishMediaNotification(notification)
 
         updateWakeLock()
+        updateCastWifiLock()
 
         return START_NOT_STICKY
     }
@@ -533,7 +544,7 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
         fields.forEach { key ->
             if (args.containsKey(key)) intent.putExtra(key, args[key] as? String)
         }
-        listOf("isPlaying", "isShuffle", "isFavorite", "isCasting", "isRemotePlayback", "isLive")
+        listOf("isPlaying", "isShuffle", "isFavorite", "isCasting", "isNativeChromecast", "castBuffering", "isRemotePlayback", "isLive")
             .forEach { key ->
                 (args[key] as? Boolean)?.let { intent.putExtra(key, it) }
             }
@@ -577,6 +588,7 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
             wakeLock?.release()
         }
         wakeLock = null
+        releaseCastWifiLock()
         castVolumeProvider = null
         if (mediaRouter.mediaSessionToken == mediaSession.sessionToken) {
             mediaRouter.setMediaSessionCompat(null)
@@ -606,6 +618,7 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
             wakeLock?.release()
         }
         wakeLock = null
+        releaseCastWifiLock()
 
         try {
             FlutterEngineCache.getInstance().remove("main_engine")
@@ -838,7 +851,7 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
             return
         }
 
-        if (isPlaying) {
+        if (isPlaying || (isCasting && castBuffering)) {
             if (wakeLock == null) {
                 wakeLock = pm.newWakeLock(
                     PowerManager.PARTIAL_WAKE_LOCK,
@@ -857,6 +870,31 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
                 android.util.Log.d("MusicNotification", "[WakeLock] Released PARTIAL_WAKE_LOCK")
             }
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun updateCastWifiLock() {
+        if (!isCasting || (!isPlaying && !castBuffering)) {
+            releaseCastWifiLock()
+            return
+        }
+        try {
+            if (castWifiLock == null) {
+                val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                // Keep normal Wi-Fi residency for the HTTP relay. Low-latency
+                // mode is screen/foreground restricted and is not a screen-off lock.
+                castWifiLock = wifi?.createWifiLock(WifiManager.WIFI_MODE_FULL, "Lokal:cast_relay")
+                    ?.apply { setReferenceCounted(false) }
+            }
+            castWifiLock?.let { if (!it.isHeld) it.acquire() }
+        } catch (error: Exception) {
+            android.util.Log.w("MusicNotification", "Cast Wi-Fi lock unavailable", error)
+        }
+    }
+
+    private fun releaseCastWifiLock() {
+        castWifiLock?.let { if (it.isHeld) it.release() }
+        castWifiLock = null
     }
 
     private fun syncAudioFocusState() {
@@ -935,10 +973,19 @@ class MusicNotificationService : MediaBrowserServiceCompat() {
             // Keep promotion and subsequent updates on the same publication
             // path. The startup post is asynchronous, so every notification
             // it can publish must remain associated with the media session.
-            startForeground(NOTIFICATION_ID, notification)
+            promotePlaybackService(notification)
         } else {
             notificationManager.notify(NOTIFICATION_ID, notification)
         }
+    }
+
+    private fun promotePlaybackService(notification: Notification) {
+        // The sender still serves files and advances the Dart queue while CAF
+        // owns the remote media session. Declare that external-device work
+        // explicitly instead of relying on a paused local playback session.
+        val type = if (isCasting) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            else ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
     }
 
     private fun buildStartupNotification(): Notification {

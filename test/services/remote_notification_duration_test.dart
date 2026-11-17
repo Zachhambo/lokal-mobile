@@ -6,6 +6,51 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('Cast starts background protection before metadata and forwards buffering/pause', () async {
+    const channel = MethodChannel('com.mossapps.flick/player');
+    final calls = <MethodCall>[];
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+    final service = NotificationService();
+    try {
+      await service.hideNotification();
+      calls.clear();
+      await service.updateCastState(
+        isCasting: true,
+        isNativeChromecast: true,
+        isPlaying: false,
+        castBuffering: true,
+        castDeviceName: 'Living room',
+      );
+      expect(calls.length, 1);
+      expect(calls.single.method, 'updateNotification');
+      expect(calls.single.arguments, containsPair('isCasting', true));
+      expect(calls.single.arguments, containsPair('isPlaying', false));
+      expect(calls.single.arguments, containsPair('castBuffering', true));
+      await service.updateCastState(
+        isCasting: true, isNativeChromecast: true,
+        isPlaying: true, castBuffering: false,
+      );
+      expect(calls.last.arguments, containsPair('isPlaying', true));
+      await service.updateCastState(
+        isCasting: true, isNativeChromecast: true,
+        isPlaying: false, castBuffering: false,
+      );
+      expect(calls.last.arguments, containsPair('isPlaying', false));
+      expect(calls.last.arguments, containsPair('castBuffering', false));
+      // A volume-only update must not invent a pause or buffering transition.
+      await service.updateCastState(isCasting: true, castVolumePercent: 40);
+      expect(calls.last.arguments, isNot(contains('isPlaying')));
+      expect(calls.last.arguments, isNot(contains('castBuffering')));
+    } finally {
+      await service.hideNotification();
+      messenger.setMockMethodCallHandler(channel, null);
+    }
+  });
+
   test('remote owner reconciles MediaSession duration without toggling remote mode', () async {
     const channel = MethodChannel('com.mossapps.flick/player');
     final calls = <MethodCall>[];
