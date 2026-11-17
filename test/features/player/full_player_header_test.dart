@@ -21,8 +21,8 @@ void main() {
     id: 'fixture', title: 'Song', artist: 'Artist',
     fileType: 'FLAC', duration: Duration(minutes: 3),
   );
-  Widget header(bool bright, {bool reducedMotion = false}) => ProviderScope(
-    overrides: [fullPlayerInLibraryProvider.overrideWith((ref, song) async => false)],
+  Widget header(bool bright, {bool reducedMotion = false, bool inLibrary = false}) => ProviderScope(
+    overrides: [fullPlayerInLibraryProvider.overrideWith((ref, song) async => inLibrary)],
     child: MaterialApp(
     theme: AppTheme.darkTheme,
     home: MediaQuery(
@@ -97,6 +97,17 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(ink(tester), light);
+  });
+
+  testWidgets('library check uses the same neutral artwork ink as the other controls', (tester) async {
+    for (final bright in [false, true]) {
+      await tester.pumpWidget(header(bright, inLibrary: true));
+      await tester.pumpAndSettle();
+      final check = tester.widget<Icon>(find.byIcon(Icons.check_rounded));
+      expect(check.color, ink(tester));
+      expect(find.byIcon(LucideIcons.cast), findsNothing);
+      expect(find.byIcon(Icons.download_rounded), findsNothing);
+    }
   });
 
   testWidgets('reduced motion updates header text without animating', (

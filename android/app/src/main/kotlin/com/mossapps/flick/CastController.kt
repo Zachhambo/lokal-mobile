@@ -159,7 +159,8 @@ class CastController(private val context: Context) {
             }
         }
         override fun onRouteVolumeChanged(router: MediaRouter, route: MediaRouter.RouteInfo) {
-            if (route.playbackType == MediaRouter.RouteInfo.PLAYBACK_TYPE_REMOTE && route.volumeMax > 0) {
+            if (route.id == activeRouteId && route.isSelected &&
+                route.playbackType == MediaRouter.RouteInfo.PLAYBACK_TYPE_REMOTE && route.volumeMax > 0) {
                 emit(
                     mapOf(
                         "event" to "volume",

@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:io';
+import 'package:flick/data/repositories/song_repository.dart';
+import 'package:flick/providers/songs_provider.dart';
 
 import 'package:flick/features/player/widgets/full_player_library_action.dart';
 import 'package:flick/features/search/online_song_save.dart';
@@ -12,6 +15,19 @@ const online = Song(
   id: 'online:one', title: 'Song', artist: 'Artist', album: 'Album',
   fileType: 'FLAC', duration: Duration(minutes: 3), isExternal: true,
 );
+
+class _Repository extends Fake implements SongRepository {
+  final List<Song> songs;
+  _Repository(this.songs);
+  @override
+  Future<Song?> getSongById(String id) async =>
+      songs.where((song) => song.id == id).firstOrNull;
+  @override
+  Future<Song?> getSongByFilePath(String path) async =>
+      songs.where((song) => song.filePath == path).firstOrNull;
+  @override
+  Future<List<Song>> getHistoryMatchCandidates(String title) async => songs;
+}
 
 void main() {
   setUp(() {
@@ -31,6 +47,33 @@ void main() {
     expect(fullPlayerLibraryMatch(online, local.copyWith(title: 'Song (Live)')), isFalse);
     expect(fullPlayerLibraryMatch(online, local.copyWith(album: 'Live Album')), isFalse);
     expect(fullPlayerLibraryMatch(online, local.copyWith(duration: const Duration(minutes: 4))), isFalse);
+  });
+
+  test('membership requires a persistent local file, not a cache or missing file', () async {
+    final directory = await Directory.systemTemp.createTemp('player_library');
+    final file = await File('${directory.path}/song.flac').writeAsBytes([1]);
+    final local = online.copyWith(id: '1', isExternal: false, filePath: file.path);
+    final repository = _Repository([local]);
+    final container = ProviderContainer(overrides: [
+      songRepositoryProvider.overrideWithValue(repository),
+      libraryChangeRevisionProvider.overrideWith((ref) => const Stream<int>.empty()),
+    ]);
+    final subscription = container.listen(fullPlayerInLibraryProvider(online), (_, __) {});
+    try {
+      expect(await container.read(fullPlayerInLibraryProvider(online).future), isTrue);
+      await file.delete();
+      container.invalidate(fullPlayerInLibraryProvider(online));
+      expect(await container.read(fullPlayerInLibraryProvider(online).future), isFalse);
+      // A cache file exists, but it is not a repository entry.
+      await file.writeAsBytes([1]);
+      repository.songs.clear();
+      container.invalidate(fullPlayerInLibraryProvider(online));
+      expect(await container.read(fullPlayerInLibraryProvider(online).future), isFalse);
+    } finally {
+      subscription.close();
+      container.dispose();
+      await directory.delete(recursive: true);
+    }
   });
 
   testWidgets('download becomes a neutral check and refuses duplicate taps', (tester) async {
