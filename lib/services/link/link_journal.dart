@@ -213,7 +213,7 @@ class LinkJournal {
     );
     for (final id in {...ids, ...previous}) {
       final liked = ids.contains(id);
-      if (liked == previous.contains(id)) continue;
+      if (liked == synchronized.contains(id)) continue;
       final wire = await linkFavoriteWire(
         id,
         library: songs,
