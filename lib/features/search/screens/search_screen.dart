@@ -613,7 +613,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       (total, category) => total + results.countFor(category),
     );
     final compact = enabled.length > 1 &&
-        _primaryResultCategories.containsAll(enabled) &&
+        enabled.every(_primaryResultCategories.contains) &&
         primaryResultCount <= 5;
     void addSection({
       required SearchCategory cat,
