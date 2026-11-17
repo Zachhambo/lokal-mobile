@@ -950,6 +950,7 @@ class MainActivity: FlutterActivity() {
                         isFavorite?.let { putExtra("isFavorite", it) }
                         isCasting?.let { putExtra("isCasting", it) }
                         isNativeChromecast?.let { putExtra("isNativeChromecast", it) }
+                        call.argument<Boolean>("castBuffering")?.let { putExtra("castBuffering", it) }
                         call.argument<Boolean>("isRemotePlayback")?.let { putExtra("isRemotePlayback", it) }
                         isLive?.let { putExtra("isLive", it) }
                         castDeviceName?.let { putExtra("castDeviceName", it) }

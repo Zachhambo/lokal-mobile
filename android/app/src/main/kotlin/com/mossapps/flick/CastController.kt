@@ -254,6 +254,7 @@ class CastController(private val context: Context) {
                 "position" to client.approximateStreamPosition,
                 "duration" to client.streamDuration,
                 "playing" to client.isPlaying,
+                "buffering" to client.isBuffering,
                 "loadId" to reportedIdentity.loadId,
                 "trackId" to reportedIdentity.trackId,
                 "finished" to (client.mediaStatus?.playerState == MediaStatus.PLAYER_STATE_IDLE && client.mediaStatus?.idleReason == MediaStatus.IDLE_REASON_FINISHED),

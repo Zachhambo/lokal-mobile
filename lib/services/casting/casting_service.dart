@@ -66,6 +66,12 @@ class CastingService {
   int _loadRevision = 0;
   int _sourceRevision = 0;
   int _sourcePreparations = 0;
+  final isPreparingNotifier = ValueNotifier<bool>(false);
+
+  void _syncPreparationState() {
+    isPreparingNotifier.value =
+        _sourcePreparations > 0 || _pendingCastLoadId != null;
+  }
   String? _pendingCastLoadId;
   Map<String, dynamic>? _lastCcStatus;
   int _presentationRevision = 0;
@@ -358,6 +364,7 @@ class CastingService {
     activeDeviceNotifier.value = null;
     isActiveNotifier.value = false;
     remoteVolumeNotifier.value = null;
+    PlayerService().isBufferingNotifier.value = false;
     PlayerService().isPlayingNotifier.value = false;
   }
 
@@ -681,6 +688,7 @@ class CastingService {
     final previousStatus = _lastCcStatus;
     currentCastLoadId = loadId;
     _pendingCastLoadId = loadId;
+    _syncPreparationState();
     _lastCcStatus = null;
     _completion.begin(loadId);
     try {
@@ -735,11 +743,13 @@ class CastingService {
           _completion.clear();
           _currentSong = null;
           _lastCcStatus = null;
+          PlayerService().isBufferingNotifier.value = false;
         }
       }
       rethrow;
     } finally {
       if (_pendingCastLoadId == loadId) _pendingCastLoadId = null;
+      _syncPreparationState();
     }
   }
 
@@ -812,6 +822,7 @@ class CastingService {
     } else if (_lastCcStatus?['finished'] != true) {
       await _chromecast.pause();
     }
+    PlayerService().isBufferingNotifier.value = false;
     PlayerService().isPlayingNotifier.value = false;
   }
 
@@ -1037,13 +1048,18 @@ class CastingService {
       return;
     _lastCcStatus = Map.of(e);
     _drainCastCompletion();
-    if (e['finished'] == true) return;
+    if (e['finished'] == true) {
+      ps.isBufferingNotifier.value = false;
+      return;
+    }
     if (e['sourceError'] == true) {
       errorNotifier.value =
           'The receiver could not play this audio format or reach its source.';
+      ps.isBufferingNotifier.value = false;
       ps.isPlayingNotifier.value = false;
       return;
     }
+    ps.isBufferingNotifier.value = e['buffering'] == true;
     final position = (e['position'] as num?)?.toInt();
     final duration = (e['duration'] as num?)?.toInt();
     final playing = e['playing'] as bool?;
@@ -1093,6 +1109,7 @@ class CastingService {
   Future<String?> _receiverCastUrl(Song song) async {
     final revision = ++_sourceRevision;
     _sourcePreparations++;
+    _syncPreparationState();
     bool current() => revision == _sourceRevision && !_tearingDown;
     try {
       final source = _resolveReceiverCastUrl(song, current);
@@ -1105,6 +1122,7 @@ class CastingService {
       );
     } finally {
       _sourcePreparations--;
+      _syncPreparationState();
     }
   }
 

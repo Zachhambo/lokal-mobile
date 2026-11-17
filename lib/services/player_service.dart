@@ -1296,6 +1296,11 @@ class PlayerService {
       onSetCastVolume: (volume) => unawaited(setVolume(volume)),
     );
     _castingService.remoteVolumeNotifier.addListener(_onRemoteVolumeChanged);
+    _castingService.isActiveNotifier.addListener(_onRemoteVolumeChanged);
+    _castingService.isPreparingNotifier.addListener(_onRemoteVolumeChanged);
+    isPlayingNotifier.addListener(_onRemoteVolumeChanged);
+    isBufferingNotifier.addListener(_onRemoteVolumeChanged);
+    isNetworkLoadingNotifier.addListener(_onRemoteVolumeChanged);
     _sessionManager.selectedModeNotifier.addListener(() {
       unawaited(
         _refreshAudioOutputDiagnostics(
@@ -4433,7 +4438,7 @@ class PlayerService {
     _rustListenersAttached = true;
 
     _rustStateListener = () {
-      if (!_usingRustBackend) return;
+      if (!_usingRustBackend || _castingService.isActive) return;
 
       final rustState = _rustAudioService.stateNotifier.value;
       // Treat buffering like playback for Android direct USB: releasing audio
@@ -4454,7 +4459,7 @@ class PlayerService {
     _rustAudioService.stateNotifier.addListener(_rustStateListener!);
 
     _rustPositionListener = () {
-      if (!_usingRustBackend) return;
+      if (!_usingRustBackend || _castingService.isActive) return;
 
       final pos = _rustAudioService.positionNotifier.value;
       _trackReplayProgress(pos);
@@ -4579,9 +4584,11 @@ class PlayerService {
     _playbackDiagnosticsDebounceTimer = null;
     _playbackStateSubscription?.cancel();
     _playbackStateSubscription = _playbackManager.playbackState.listen((state) {
+      // A paused local engine must never overwrite the receiver's clock or
+      // playing state (nor release Android's background playback locks).
+      if (_castingService.isActive) return;
       if (Platform.isIOS &&
-          (_castingService.isActive ||
-              _iosLocalRetirement ||
+          (_iosLocalRetirement ||
               IosLocalAudioRequests.lifecycle.phase.value ==
                   LocalAudioPhase.recovering ||
               IosLocalAudioRequests.lifecycle.phase.value ==
@@ -4798,11 +4805,23 @@ class PlayerService {
 
   // ponytail: remote volume ticks can be rapid (slider drags); keep them on the
   // lightweight cast-only notification path instead of a full metadata refresh.
+  bool _castNotificationWasActive = false;
+
   void _onRemoteVolumeChanged() {
+    final active = _castingService.isActive;
+    // Do not start a notification service for ordinary idle/local state ticks.
+    if (!active && !_castNotificationWasActive) return;
+    _castNotificationWasActive = active;
     final v = _castingService.remoteVolumeNotifier.value;
     unawaited(
       _notificationService.updateCastState(
-        isCasting: _castingService.isActive,
+        isCasting: active,
+        isPlaying: active && isPlayingNotifier.value,
+        castBuffering: active && (
+          isBufferingNotifier.value ||
+          isNetworkLoadingNotifier.value ||
+          _castingService.isPreparingNotifier.value
+        ),
         isNativeChromecast:
             _castingService.activeDevice?.backend == CastBackend.chromecast,
         castDeviceName: _castingService.activeDevice?.name,
@@ -9465,6 +9484,12 @@ class PlayerService {
   }
 
   void dispose() {
+    _castingService.remoteVolumeNotifier.removeListener(_onRemoteVolumeChanged);
+    _castingService.isActiveNotifier.removeListener(_onRemoteVolumeChanged);
+    _castingService.isPreparingNotifier.removeListener(_onRemoteVolumeChanged);
+    isPlayingNotifier.removeListener(_onRemoteVolumeChanged);
+    isBufferingNotifier.removeListener(_onRemoteVolumeChanged);
+    isNetworkLoadingNotifier.removeListener(_onRemoteVolumeChanged);
     isPlayingNotifier.removeListener(_updatePriorityAnchor);
     if (_priorityAnchorActive) {
       _priorityAnchorActive = false;

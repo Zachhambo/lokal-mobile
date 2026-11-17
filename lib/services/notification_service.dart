@@ -435,10 +435,14 @@ class NotificationService {
   Future<void> updateCastState({
     required bool isCasting,
     bool isNativeChromecast = false,
+    bool? isPlaying,
+    bool? castBuffering,
     String? castDeviceName,
     int? castVolumePercent,
   }) async {
-    if (!_isNotificationVisible || _owner != null) return;
+    // Establish background ownership immediately at handoff. The full metadata
+    // update can still be awaiting artwork/favorites when the screen locks.
+    if (_owner != null || (!isCasting && !_isNotificationVisible)) return;
     try {
       final args = <String, dynamic>{
         'isCasting': isCasting,
@@ -446,7 +450,10 @@ class NotificationService {
         'castDeviceName': castDeviceName,
       };
       if (castVolumePercent != null) args['castVolume'] = castVolumePercent;
+      if (isPlaying != null) args['isPlaying'] = isPlaying;
+      if (castBuffering != null) args['castBuffering'] = castBuffering;
       await _channel.invokeMethod('updateNotification', args);
+      _isNotificationVisible = true;
     } catch (e) {
       devLog('Failed to update cast state: $e');
     }
