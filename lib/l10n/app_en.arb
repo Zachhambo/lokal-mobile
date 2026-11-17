@@ -1,8 +1,4 @@
 {
-  "aLittleRecordOfWhatStayed": "A little record of what stayed on repeat.",
-  "@aLittleRecordOfWhatStayed": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:476"
-  },
   "aNewerFlickBuildIsOn": "A newer Lokal build is on the Play Store.",
   "@aNewerFlickBuildIsOn": {
     "description": "lib/features/menu/screens/menu_screen.dart:1234"
@@ -3570,10 +3566,6 @@
   "keepTheSessionMovingOrHead": "Keep the session moving or head straight back to the player.",
   "@keepTheSessionMovingOrHead": {
     "description": "lib/features/menu/screens/menu_screen.dart:1313"
-  },
-  "keepYourReplay": "Keep your Replay.",
-  "@keepYourReplay": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:465"
   },
   "keeping": "Keeping • {type} • {br}",
   "@keeping": {

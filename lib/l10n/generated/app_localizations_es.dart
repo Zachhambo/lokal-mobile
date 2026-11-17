@@ -10,10 +10,6 @@ class AppLocalizationsEs extends AppLocalizations {
   AppLocalizationsEs([String locale = 'es']) : super(locale);
 
   @override
-  String get aLittleRecordOfWhatStayed =>
-      'Un pequeño registro de lo que quedó repetido.';
-
-  @override
   String get aNewerFlickBuildIsOn =>
       'Hay una versión más nueva de Lokal en Play Store.';
 
@@ -2646,9 +2642,6 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get keepTheSessionMovingOrHead =>
       'Mantenga la sesión en movimiento o regrese directamente al reproductor.';
-
-  @override
-  String get keepYourReplay => 'Mantenga su repetición.';
 
   @override
   String keeping(Object type, Object br) {

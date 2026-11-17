@@ -2,6 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <!-- Widget URLs are handled by the native inbox, not Navigator named routes. -->
+  <key>FlutterDeepLinkingEnabled</key><false/>
+  <key>LokalWidgetAppGroup</key><string>group.app.lokal.mobile.widgets</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

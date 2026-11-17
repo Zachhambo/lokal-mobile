@@ -10,10 +10,6 @@ class AppLocalizationsNl extends AppLocalizations {
   AppLocalizationsNl([String locale = 'nl']) : super(locale);
 
   @override
-  String get aLittleRecordOfWhatStayed =>
-      'Een klein verslagje van wat op repeat bleef staan.';
-
-  @override
   String get aNewerFlickBuildIsOn =>
       'Een nieuwere Lokal-build staat in de Play Store.';
 
@@ -2640,9 +2636,6 @@ class AppLocalizationsNl extends AppLocalizations {
   @override
   String get keepTheSessionMovingOrHead =>
       'Houd de sessie gaande of ga direct terug naar de speler.';
-
-  @override
-  String get keepYourReplay => 'Bewaar je herhaling.';
 
   @override
   String keeping(Object type, Object br) {

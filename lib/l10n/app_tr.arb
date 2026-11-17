@@ -1,8 +1,4 @@
 {
-  "aLittleRecordOfWhatStayed": "Tekrar tekrar dinlediklerinden küçük bir hatıra.",
-  "@aLittleRecordOfWhatStayed": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:476"
-  },
   "aNewerFlickBuildIsOn": "Play Store'da Lokal'in daha yeni bir sürümü var.",
   "@aNewerFlickBuildIsOn": {
     "description": "lib/features/menu/screens/menu_screen.dart:1234"
@@ -3570,10 +3566,6 @@
   "keepTheSessionMovingOrHead": "Dinlemeye devam et veya doğrudan oynatıcıya dön.",
   "@keepTheSessionMovingOrHead": {
     "description": "lib/features/menu/screens/menu_screen.dart:1313"
-  },
-  "keepYourReplay": "Yıl özetini sakla.",
-  "@keepYourReplay": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:465"
   },
   "keeping": "Tutuluyor • {type} • {br}",
   "@keeping": {

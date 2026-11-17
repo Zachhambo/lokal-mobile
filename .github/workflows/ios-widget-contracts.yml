@@ -1,6 +1,18 @@
-name: Archived iPhone widget research (manual only)
+name: iPhone widgets — integration, layouts and package
 
 on:
+  pull_request:
+    paths:
+      - 'ios/Widgets/**'
+      - 'ios/Runner/**'
+      - 'ios/Runner.xcodeproj/**'
+      - 'lib/services/ios_widget_*.dart'
+      - 'lib/features/konnekted/konnekted_runtime.dart'
+      - 'lib/features/settings/screens/ios_widget_settings_screen.dart'
+      - 'lib/features/settings/lokal/groups/appearance_group.dart'
+      - 'test/widgets/ios/**'
+      - 'tool/*ios*widget*.py'
+      - '.github/workflows/ios-widget-contracts.yml'
   workflow_dispatch:
 
 permissions:
@@ -30,7 +42,7 @@ jobs:
       - name: Check the Dart writer against the shared corpus
         run: |
           flutter pub get --enforce-lockfile
-          flutter analyze --no-pub --fatal-infos lib/models/ios_widget_snapshot.dart lib/services/ios_widget_snapshot_builder.dart lib/services/ios_widget_publication_coordinator.dart lib/services/ios_widget_method_channel_transport.dart lib/services/ios_widget_state_sampler.dart lib/services/ios_widget_owned_artwork.dart lib/services/ios_widget_runtime.dart test/widgets/ios
+          flutter analyze --no-pub --no-fatal-infos lib/features/settings/screens/ios_widget_settings_screen.dart lib/services/ios_widget_actions.dart lib/services/ios_widget_integration.dart lib/features/konnekted/konnekted_runtime.dart lib/models/ios_widget_snapshot.dart lib/services/ios_widget_snapshot_builder.dart lib/services/ios_widget_publication_coordinator.dart lib/services/ios_widget_method_channel_transport.dart lib/services/ios_widget_state_sampler.dart lib/services/ios_widget_owned_artwork.dart lib/services/ios_widget_runtime.dart test/widgets/ios
           flutter test --no-pub test/widgets/ios test/services/android_widget_contract_test.dart
       - name: Type-check the real Flutter host bridge on both iOS 16 SDK targets
         run: |
@@ -46,6 +58,8 @@ jobs:
               libraries = plistlib.load(source)['AvailableLibraries']
           files = [
               'ios/Widgets/Contracts/LokalWidgetSnapshot.swift',
+              'ios/Widgets/Contracts/LokalWidgetGroup.swift',
+              'ios/Widgets/Contracts/LokalWidgetLink.swift',
               'ios/Widgets/Storage/LokalWidgetStore.swift',
               'ios/Widgets/Publication/LokalWidgetPublisher.swift',
               'ios/Runner/LokalWidgetBridge.swift',
@@ -77,6 +91,8 @@ jobs:
           persist-credentials: false
       - name: Verify render startup gate boundaries
         run: |
+          python3 -m unittest discover -s tool -p test_ios_widget_package.py
+          python3 -m unittest discover -s tool -p ci_ios_store_distribution_test.py
           python3 -m unittest discover -s tool -p test_ios_widget_render.py
           python3 -m unittest discover -s tool -p test_ios_widget_live_capture.py
       - name: Compile and exercise the actual Foundation reader
@@ -84,6 +100,10 @@ jobs:
           xcodebuild -version
           swiftc -swift-version 6 -warnings-as-errors ios/Widgets/Contracts/LokalWidgetSnapshot.swift ios/Widgets/Tests/main.swift -o "$RUNNER_TEMP/lokal-widget-contracts"
           "$RUNNER_TEMP/lokal-widget-contracts" test/fixtures/ios_widget/snapshot_contract.json
+      - name: Verify repeated taps and durable invocation identities
+        run: |
+          swiftc -swift-version 6 -warnings-as-errors ios/Widgets/Contracts/LokalWidgetLink.swift ios/Widgets/LinkTests/main.swift -o "$RUNNER_TEMP/lokal-widget-links"
+          "$RUNNER_TEMP/lokal-widget-links"
       - name: Exercise native widget presentation and timeline policy
         run: |
           swiftc -swift-version 6 -warnings-as-errors ios/Widgets/Contracts/LokalWidgetSnapshot.swift ios/Widgets/Storage/LokalWidgetStore.swift ios/Widgets/Presentation/LokalWidgetPresentation.swift ios/Widgets/Presentation/LokalWidgetDisplayArtwork.swift ios/Widgets/PresentationTests/main.swift -o "$RUNNER_TEMP/lokal-widget-presentation-contracts"
@@ -166,3 +186,152 @@ jobs:
             ${{ runner.temp }}/lokal-widget-renders
             ${{ runner.temp }}/ios-simulator-boot-18.6-widget-render*
           retention-days: 14
+
+  iphone:
+    name: Build iPhone IPA
+    outputs:
+      ipa_artifact: ${{ steps.ipa_bundle.outputs.artifact-id }}
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      CI: 'true'
+      FLUTTER_SUPPRESS_ANALYTICS: 'true'
+      IPHONEOS_DEPLOYMENT_TARGET: '16.0'
+      DEVELOPER_DIR: /Applications/Xcode_26.0.1.app/Contents/Developer
+      LOKAL_IOS_CARGO_CACHE_ROOT: ${{ github.workspace }}/.dart_tool/lokal-ios-cargo
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
+      LOKAL_IOS_NATIVE_ARCHIVE_CACHE: ${{ github.workspace }}/.dart_tool/lokal-ios-native-archives
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: 3.47.1
+          channel: stable
+          cache: true
+      - name: Restore checksum-pinned native archives
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: .dart_tool/lokal-ios-native-archives
+          key: ios-native-archives-v1-${{ hashFiles('tool/ios_prepare_ffmpeg.py', 'tool/ios_prepare_smb.py', 'pubspec.lock') }}
+      - name: Configure the Apple build
+        run: |
+          sudo xcode-select --switch "$DEVELOPER_DIR"
+          xcodebuild -version
+          flutter config --no-enable-swift-package-manager
+          rustup toolchain install 1.98.0 --profile minimal --no-self-update
+          rustup target add --toolchain 1.98.0 aarch64-apple-ios
+          flutter pub get --enforce-lockfile
+          flutter precache --ios
+          python3 tool/ios_readiness.py --require-scaffold --require-localizations
+      - name: Generate native alternate icons
+        run: |
+          python3 -m venv "$RUNNER_TEMP/lokal-ios-assets"
+          "$RUNNER_TEMP/lokal-ios-assets/bin/pip" install -r tool/requirements-release-art.txt
+          "$RUNNER_TEMP/lokal-ios-assets/bin/python" tool/gen_ios_icons.py
+      - name: Verify the FFmpeg native dependency
+        run: python3 tool/ios_prepare_ffmpeg.py
+      - name: Verify and stage native SMB
+        run: |
+          python3 tool/ios_prepare_smb.py
+          python3 tool/ios_smb_link_probe.py
+      - name: Verify native transfer storage and the real Flutter bridge
+        run: |
+          python3 tool/ios_transfer_contracts.py --check-ios-sdks --check-flutter-bridge --repeat-native 5
+      - name: Restore native dependencies with Cargo fingerprint validation
+        id: rust_cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            .dart_tool/lokal-ios-cargo/iphoneos/Release
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/registry/index
+          key: ios-cargo-symbols-v3-${{ runner.os }}-${{ runner.arch }}-xcode26.0.1-rust1.98.0-iphoneos-Release-${{ hashFiles('rust/Cargo.lock', 'rust/Cargo.toml', 'rust/cargokit.yaml', 'rust/vendor/**', 'rust_builder/cargokit/build_tool/lib/**', 'rust_builder/cargokit/build_tool/pubspec.lock', 'rust_builder/cargokit/*.sh') }}-${{ hashFiles('rust/**/*.rs') }}
+          restore-keys: |
+            ios-cargo-symbols-v3-${{ runner.os }}-${{ runner.arch }}-xcode26.0.1-rust1.98.0-iphoneos-Release-${{ hashFiles('rust/Cargo.lock', 'rust/Cargo.toml', 'rust/cargokit.yaml', 'rust/vendor/**', 'rust_builder/cargokit/build_tool/lib/**', 'rust_builder/cargokit/build_tool/pubspec.lock', 'rust_builder/cargokit/*.sh') }}-
+      - name: Calculate iOS version and build from the published release
+        id: ios_version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IOS_VERSION_BUMP: ${{ inputs.bump || 'patch' }}
+          IOS_VERSION: ${{ inputs.version || '' }}
+        run: python3 tool/ios_release_version.py
+      - name: Build the release iPhone app without signing credentials
+        id: device_build
+        env:
+          IOS_BUILD_VERSION: ${{ steps.ios_version.outputs.version }}
+          IOS_BUILD_NUMBER: ${{ steps.ios_version.outputs.build }}
+        run: |
+          if ! flutter build ios --release --no-codesign --no-pub --build-name "$IOS_BUILD_VERSION" --build-number "$IOS_BUILD_NUMBER" --split-debug-info=build/ios/dart-symbols --verbose > "$RUNNER_TEMP/ios-device-build.log" 2>&1; then
+            python3 tool/ios_build_diagnostics.py "$RUNNER_TEMP/ios-device-build.log"
+            exit 1
+          fi
+      - name: Inspect and package the engineering IPA
+        id: package
+        run: |
+          python3 tool/ios_package.py build/ios/iphoneos/Runner.app build/ios/ipa/Lokal-unsigned.ipa --dart-symbols build/ios/dart-symbols
+          git archive --format=tar.gz HEAD -o build/ios/ipa/Lokal-source.tar.gz
+      - name: Upload the iPhone IPA immediately
+        id: ipa_bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          compression-level: 0
+          name: Lokal-iPhone-engineering-unsigned-${{ github.run_number }}-attempt${{ github.run_attempt }}
+          path: |
+            build/ios/ipa/*
+            build/ios/iphoneos/*.dSYM
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve dependency locks
+        run: git diff --exit-code -- pubspec.lock rust/Cargo.lock
+      - name: Preserve device build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          compression-level: 0
+          name: iPhone-device-build-${{ github.run_number }}-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ios-device-build.log
+          if-no-files-found: ignore
+      - name: Save successfully compiled native dependencies
+        if: 'always() && !cancelled() && steps.device_build.outcome == ''success'' && steps.rust_cache.outputs.cache-hit != ''true'''
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            .dart_tool/lokal-ios-cargo/iphoneos/Release
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/registry/index
+          key: ${{ steps.rust_cache.outputs.cache-primary-key }}
+
+  ios_release_audit:
+    name: Verify IPA and matching source
+    needs: iphone
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify the release audit's negative controls
+        run: |
+          python3 -m unittest discover -s tool -p test_ios_sideload_release.py
+          python3 -m unittest discover -s tool -p test_ios_native_symbols.py
+          python3 -m unittest discover -s tool -p test_ios_verify_engineering_release.py
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.iphone.outputs.ipa_artifact }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/iphone-release
+      - name: Independently inspect IPA, source blobs and saved symbols
+        run: |
+          # Do not let tee mask an audit exception: a green job must mean verified bytes.
+          set -o pipefail
+          python3 tool/ios_verify_engineering_release.py "$RUNNER_TEMP/iphone-release" | tee "$RUNNER_TEMP/ios-release-audit.json"
+          {
+            printf '## Unsigned iPhone engineering IPA audit\n\n'
+            printf 'IPA bytes, manifest, all exported source blobs, native/symbol inventory and required resources verified at %s.\n\n' "$GITHUB_SHA"
+            printf 'Publication separately requires both simulator suites. Local signing, physical iPhone and live provider acceptance remain separate.\n'
+          } >> "$GITHUB_STEP_SUMMARY"

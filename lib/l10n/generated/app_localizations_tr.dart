@@ -10,10 +10,6 @@ class AppLocalizationsTr extends AppLocalizations {
   AppLocalizationsTr([String locale = 'tr']) : super(locale);
 
   @override
-  String get aLittleRecordOfWhatStayed =>
-      'Tekrar tekrar dinlediklerinden küçük bir hatıra.';
-
-  @override
   String get aNewerFlickBuildIsOn =>
       'Play Store\'da Lokal\'in daha yeni bir sürümü var.';
 
@@ -2625,9 +2621,6 @@ class AppLocalizationsTr extends AppLocalizations {
   @override
   String get keepTheSessionMovingOrHead =>
       'Dinlemeye devam et veya doğrudan oynatıcıya dön.';
-
-  @override
-  String get keepYourReplay => 'Yıl özetini sakla.';
 
   @override
   String keeping(Object type, Object br) {

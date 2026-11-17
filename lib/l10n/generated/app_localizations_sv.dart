@@ -10,10 +10,6 @@ class AppLocalizationsSv extends AppLocalizations {
   AppLocalizationsSv([String locale = 'sv']) : super(locale);
 
   @override
-  String get aLittleRecordOfWhatStayed =>
-      'En liten beskrivning av vad som stannade på repeat.';
-
-  @override
   String get aNewerFlickBuildIsOn =>
       'En nyare Lokal-version finns i Play Butik.';
 
@@ -2634,9 +2630,6 @@ class AppLocalizationsSv extends AppLocalizations {
   @override
   String get keepTheSessionMovingOrHead =>
       'Håll sessionen i rörelse eller gå direkt tillbaka till spelaren.';
-
-  @override
-  String get keepYourReplay => 'Behåll din repris.';
 
   @override
   String keeping(Object type, Object br) {

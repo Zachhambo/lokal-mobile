@@ -10,9 +10,6 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
-  String get aLittleRecordOfWhatStayed => '记录下那些被你反复播放的旋律。';
-
-  @override
   String get aNewerFlickBuildIsOn => 'Play Store 上有更新的 Lokal 版本。';
 
   @override
@@ -2458,9 +2455,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get keepTheSessionMovingOrHead => '让音乐继续，或直接回到播放器。';
-
-  @override
-  String get keepYourReplay => '留住你的回顾。';
 
   @override
   String keeping(Object type, Object br) {

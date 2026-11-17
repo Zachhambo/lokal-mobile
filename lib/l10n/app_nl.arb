@@ -1,9 +1,5 @@
 {
   "@@locale": "nl",
-  "aLittleRecordOfWhatStayed": "Een klein verslagje van wat op repeat bleef staan.",
-  "@aLittleRecordOfWhatStayed": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:476"
-  },
   "aNewerFlickBuildIsOn": "Een nieuwere Lokal-build staat in de Play Store.",
   "@aNewerFlickBuildIsOn": {
     "description": "lib/features/menu/screens/menu_screen.dart:1234"
@@ -3571,10 +3567,6 @@
   "keepTheSessionMovingOrHead": "Houd de sessie gaande of ga direct terug naar de speler.",
   "@keepTheSessionMovingOrHead": {
     "description": "lib/features/menu/screens/menu_screen.dart:1313"
-  },
-  "keepYourReplay": "Bewaar je herhaling.",
-  "@keepYourReplay": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:465"
   },
   "keeping": "Behouden • {type} • {br}",
   "@keeping": {

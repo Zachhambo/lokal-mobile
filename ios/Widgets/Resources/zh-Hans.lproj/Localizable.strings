@@ -9,3 +9,12 @@
 "Start Flow or radio in Lokal" = "在 Lokal 中启动 Flow 或电台";
 "Playback progress" = "播放进度";
 "Unknown track" = "未知曲目";
+
+"Play" = "播放";
+"Pause" = "暂停";
+"Next" = "下一首";
+"Previous" = "上一首";
+"Queue" = "播放队列";
+"Flow" = "Flow";
+"Song Radio" = "歌曲电台";
+"Your Flow" = "你的 Flow";

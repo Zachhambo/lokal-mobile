@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 import zipfile
 
 from ios_native_symbols import arm64_image, load_commands
+from ios_widget_package import zip_widgets
 
 REPO = 'lokal-music/mobile'
 RELEASE_URL = f'https://github.com/{REPO}/releases/tag/ios'
@@ -65,7 +66,7 @@ def package_permissions(ipa, metadata):
     with zipfile.ZipFile(ipa) as archive:
         plists = [name for name in archive.namelist()
                   if re.fullmatch(r'Payload/[^/]+\.app/Info.plist', name)]
-        if len(plists) != 1 or any('.appex/' in name for name in archive.namelist()):
+        if len(plists) != 1:
             raise ValueError('Review store permissions before distributing app extensions')
         info = plistlib.loads(archive.read(plists[0]))
         for key, field in [('CFBundleIdentifier', 'bundle_id'),
@@ -79,7 +80,13 @@ def package_permissions(ipa, metadata):
         if Path(executable).name != executable:
             raise ValueError('Invalid executable name')
         binary = archive.read(plists[0].removesuffix('Info.plist') + executable)
-        return {'entitlements': entitlements(binary),
+        widgets = zip_widgets(archive, plists[0], info)
+        permissions = set(entitlements(binary))
+        for widget in widgets:
+            permissions.update(entitlements(archive.read(plists[0].removesuffix('Info.plist') + widget['executable'])))
+        if widgets:
+            permissions.add('com.apple.security.application-groups')
+        return {'entitlements': sorted(permissions),
                 'privacy': {key: value for key, value in info.items()
                             if key.startswith('NS') and 'UsageDescription' in key}}
 

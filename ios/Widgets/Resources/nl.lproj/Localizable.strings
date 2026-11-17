@@ -9,3 +9,12 @@
 "Start Flow or radio in Lokal" = "Start Flow of radio in Lokal";
 "Playback progress" = "Afspeelvoortgang";
 "Unknown track" = "Onbekend nummer";
+
+"Play" = "Afspelen";
+"Pause" = "Pauze";
+"Next" = "Volgende";
+"Previous" = "Vorige";
+"Queue" = "Wachtrij";
+"Flow" = "Flow";
+"Song Radio" = "Nummerradio";
+"Your Flow" = "Jouw Flow";

@@ -9,3 +9,12 @@
 "Start Flow or radio in Lokal" = "Lancez Flow ou une radio dans Lokal";
 "Playback progress" = "Progression de la lecture";
 "Unknown track" = "Titre inconnu";
+
+"Play" = "Lire";
+"Pause" = "Pause";
+"Next" = "Suivant";
+"Previous" = "Précédent";
+"Queue" = "File d’attente";
+"Flow" = "Flow";
+"Song Radio" = "Radio du titre";
+"Your Flow" = "Votre Flow";

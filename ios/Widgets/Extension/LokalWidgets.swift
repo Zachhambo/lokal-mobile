@@ -17,7 +17,7 @@ private struct LokalNowPlayingWidget: Widget {
     }
     .configurationDisplayName(Text(lokalWidgetText("Now Playing")))
     .description(Text(lokalWidgetText("Your music, one tap away")))
-    .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+    .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .accessoryCircular, .accessoryRectangular, .accessoryInline])
   }
 }
 

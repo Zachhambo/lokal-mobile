@@ -197,36 +197,40 @@
 			sourceTree = "<group>";
 		};
 		C438A11BC3F0E7C995F8815F = {
-			isa = PBXGroup;
-			children = (
-				1F7F84937E134EAAC45E165C,
-				6DCB124390CFE33C647872CB,
-				4CC8F12BB6FD568C0E828CF6,
-				CA1494937C670405E43A122B,
-				E6EBCFABA495B8FE1AF4D0B0,
-				257E5711083DD688894E51F0,
-				E6FCA18C069BB2B809E6B1DA,
-				D6C568EC61F7BA1F0DA124D4,
-				0472F93596097B45CF10155E,
-				01B5FBA80FF16A62C1AB3EC0,
-				005AB80C9604952AA64A8EC1,
-				CE604D5B20B03B125BFEFCC1,
+			"isa" = "PBXGroup";
+			"children" = (
+				"1F7F84937E134EAAC45E165C",
+				"6DCB124390CFE33C647872CB",
+				"4CC8F12BB6FD568C0E828CF6",
+				"CA1494937C670405E43A122B",
+				"E6EBCFABA495B8FE1AF4D0B0",
+				"257E5711083DD688894E51F0",
+				"E6FCA18C069BB2B809E6B1DA",
+				"D6C568EC61F7BA1F0DA124D4",
+				"0472F93596097B45CF10155E",
+				"01B5FBA80FF16A62C1AB3EC0",
+				"005AB80C9604952AA64A8EC1",
+				"CE604D5B20B03B125BFEFCC1",
+				"B92000000000000000000001",
+				"B92000000000000000000002",
 			);
-			sourceTree = "<group>";
+			"sourceTree" = "<group>";
 		};
 		DFA30C5AAA4850ABDCA0ECB6 = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				A7B9CEA0C8736AAC21E91A86,
-				5BE159A4F2A19F6F62B0CCF0,
-				23EA6434A3003A273EB77410,
-				C85CB34BF712FEFC66BCAB6E,
-				7B0CD115FA5C83FC5B6420C3,
-				3B4612C0161443741A8E4205,
-				B67D6493E018A7A94381FC0D,
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = (
+				"A7B9CEA0C8736AAC21E91A86",
+				"5BE159A4F2A19F6F62B0CCF0",
+				"23EA6434A3003A273EB77410",
+				"C85CB34BF712FEFC66BCAB6E",
+				"7B0CD115FA5C83FC5B6420C3",
+				"3B4612C0161443741A8E4205",
+				"B67D6493E018A7A94381FC0D",
+				"B92000000000000000000003",
+				"B92000000000000000000004",
 			);
-			runOnlyForDeploymentPostprocessing = 0;
+			"runOnlyForDeploymentPostprocessing" = "0";
 		};
 		A4CFB60FFD4323C52AC2E832 = {
 			isa = PBXResourcesBuildPhase;
@@ -258,26 +262,28 @@
 			};
 		};
 		D0778386515F15B33388E34C = {
-			isa = XCBuildConfiguration;
-			name = Debug;
-			buildSettings = {
-				APPLICATION_EXTENSION_API_ONLY = YES;
-				CODE_SIGN_STYLE = Automatic;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = Extension/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"APPLICATION_EXTENSION_API_ONLY" = "YES";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"GENERATE_INFOPLIST_FILE" = "NO";
+				"INFOPLIST_FILE" = "Extension/Info.plist";
+				"LD_RUNPATH_SEARCH_PATHS" = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = app.lokal.mobile.widgets;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				TARGETED_DEVICE_FAMILY = "1,2";
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
-				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = NO;
+				"PRODUCT_BUNDLE_IDENTIFIER" = "app.lokal.mobile.widgets";
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"SKIP_INSTALL" = "YES";
+				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
+				"TARGETED_DEVICE_FAMILY" = "1,2";
+				"SWIFT_EMIT_LOC_STRINGS" = "NO";
+				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
+				"ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS" = "NO";
+				"MARKETING_VERSION" = "1.0.0";
+				"CURRENT_PROJECT_VERSION" = "1";
 			};
 		};
 		7AA327DEFC51466C00F71E73 = {
@@ -295,26 +301,28 @@
 			};
 		};
 		5F86AFCC3A3AD77422E9C1AD = {
-			isa = XCBuildConfiguration;
-			name = Release;
-			buildSettings = {
-				APPLICATION_EXTENSION_API_ONLY = YES;
-				CODE_SIGN_STYLE = Automatic;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = Extension/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"APPLICATION_EXTENSION_API_ONLY" = "YES";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"GENERATE_INFOPLIST_FILE" = "NO";
+				"INFOPLIST_FILE" = "Extension/Info.plist";
+				"LD_RUNPATH_SEARCH_PATHS" = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = app.lokal.mobile.widgets;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				TARGETED_DEVICE_FAMILY = "1,2";
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
-				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = NO;
+				"PRODUCT_BUNDLE_IDENTIFIER" = "app.lokal.mobile.widgets";
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"SKIP_INSTALL" = "YES";
+				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
+				"TARGETED_DEVICE_FAMILY" = "1,2";
+				"SWIFT_EMIT_LOC_STRINGS" = "NO";
+				"ENABLE_USER_SCRIPT_SANDBOXING" = "YES";
+				"ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS" = "NO";
+				"MARKETING_VERSION" = "1.0.0";
+				"CURRENT_PROJECT_VERSION" = "1";
 			};
 		};
 		6DF2E7E163EF0961B942AC3C = {
@@ -388,15 +396,16 @@
 			fileRef = 01B5FBA80FF16A62C1AB3EC0;
 		};
 		EDF002B3E7E54A26A96F5C39 = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				677B138BABF817CDC6E9B84C,
-				A914CD686F05002F4128E674,
-				784544F23C9581E39CA28458,
-				A0FF9775FE22D0EF4B4467AA,
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = (
+				"677B138BABF817CDC6E9B84C",
+				"A914CD686F05002F4128E674",
+				"784544F23C9581E39CA28458",
+				"A0FF9775FE22D0EF4B4467AA",
+				"B92000000000000000000005",
 			);
-			runOnlyForDeploymentPostprocessing = 0;
+			"runOnlyForDeploymentPostprocessing" = "0";
 		};
 		DDD9AB0B221D8941531C3587 = {
 			isa = PBXBuildFile;
@@ -516,6 +525,30 @@
 				740BC6BEDC2570EAE0FE217C,
 				4F65776B1EA7533BFE49C144,
 			);
+		};
+		B92000000000000000000001 = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "Contracts/LokalWidgetGroup.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		B92000000000000000000002 = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "Contracts/LokalWidgetLink.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		B92000000000000000000003 = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "B92000000000000000000001";
+		};
+		B92000000000000000000004 = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "B92000000000000000000002";
+		};
+		B92000000000000000000005 = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "B92000000000000000000002";
 		};
 	};
 	rootObject = ED0330015A9710DDA300224A;

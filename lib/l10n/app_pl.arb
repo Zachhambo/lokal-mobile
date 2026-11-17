@@ -1,9 +1,5 @@
 {
   "@@locale": "pl",
-  "aLittleRecordOfWhatStayed": "Mały zapis tego, co się powtarzało.",
-  "@aLittleRecordOfWhatStayed": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:476"
-  },
   "aNewerFlickBuildIsOn": "Nowsza wersja Lokal jest dostępna w Sklepie Play.",
   "@aNewerFlickBuildIsOn": {
     "description": "lib/features/menu/screens/menu_screen.dart:1234"
@@ -3571,10 +3567,6 @@
   "keepTheSessionMovingOrHead": "Kontynuuj sesję lub wróć od razu do gracza.",
   "@keepTheSessionMovingOrHead": {
     "description": "lib/features/menu/screens/menu_screen.dart:1313"
-  },
-  "keepYourReplay": "Zachowaj powtórkę.",
-  "@keepYourReplay": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:465"
   },
   "keeping": "Zachowanie • {type} • {br}",
   "@keeping": {

@@ -1,9 +1,5 @@
 {
   "@@locale": "it",
-  "aLittleRecordOfWhatStayed": "Un piccolo resoconto di ciò che è rimasto ripetuto.",
-  "@aLittleRecordOfWhatStayed": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:476"
-  },
   "aNewerFlickBuildIsOn": "Una build Lokal più recente è sul Play Store.",
   "@aNewerFlickBuildIsOn": {
     "description": "lib/features/menu/screens/menu_screen.dart:1234"
@@ -3571,10 +3567,6 @@
   "keepTheSessionMovingOrHead": "Mantieni la sessione in movimento o torna direttamente al giocatore.",
   "@keepTheSessionMovingOrHead": {
     "description": "lib/features/menu/screens/menu_screen.dart:1313"
-  },
-  "keepYourReplay": "Conserva la tua riproduzione.",
-  "@keepYourReplay": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:465"
   },
   "keeping": "Mantenendo • {type} • {br}",
   "@keeping": {
