@@ -75,6 +75,9 @@ class IosWidgetIntegration {
   Future<void> _execute(IosWidgetCommand command) async {
     if (_disposed) return;
     final player = ref.read(playerProvider.notifier);
+    final revision = ref.read(playerServiceProvider).playbackRequestRevision;
+    bool currentRequest() => !_disposed &&
+      ref.read(playerServiceProvider).playbackRequestRevision == revision;
     switch (command.action) {
       case 'open':
         openPlayer();
@@ -97,13 +100,15 @@ class IosWidgetIntegration {
           return;
         }
         await ref.read(flowControllerProvider.future);
+        if (!currentRequest()) return;
         await ref.read(flowControllerProvider.notifier).play();
       case 'radio':
         final seed = ref.read(playerProvider).currentSong;
         if (seed == null) return;
         final recommendations = await const OnlineRadioRecommendations().recommend(
           seed, count: 8, existing: [seed]).timeout(const Duration(seconds: 17));
-        if (_disposed) return;
+        if (!currentRequest() ||
+            iosWidgetTrackAlias(ref.read(playerProvider).currentSong?.id ?? '') != command.track) return;
         if (recommendations.isEmpty) {
           showMessage('No radio matches yet. Try another song.');
           return;
@@ -113,7 +118,7 @@ class IosWidgetIntegration {
       case 'recommend':
         await ref.read(flowControllerProvider.future);
         await ref.read(flowLibraryProvider.future);
-        if (_disposed) return;
+        if (!currentRequest()) return;
         _recommendationsChanged();
         final song = _recommendations.where((song) =>
           iosWidgetTrackAlias(song.id) == command.track).firstOrNull;
