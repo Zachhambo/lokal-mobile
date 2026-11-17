@@ -5854,6 +5854,11 @@ class MainActivity: FlutterActivity() {
         }
     }
 
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (castController?.dispatchVolumeKey(event) == true) return true
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onResume() {
         super.onResume()
         LokalAppUpdater.systemUiOpen = false

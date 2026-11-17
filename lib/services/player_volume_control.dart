@@ -18,6 +18,7 @@ class PlayerVolumeControl extends ChangeNotifier with WidgetsBindingObserver {
     player.audioOutputDiagnosticsNotifier.addListener(_changed);
     player.extendedVolumeEnabledNotifier.addListener(_changed);
     CastingService.instance.remoteVolumeNotifier.addListener(_changed);
+    CastingService.instance.isActiveNotifier.addListener(_changed);
     Uac2Service.instance.addStatusListener(_routeChanged);
     if (_isAndroid) {
       _subscription = _events.listen((value) {
@@ -113,6 +114,7 @@ class PlayerVolumeControl extends ChangeNotifier with WidgetsBindingObserver {
     player.audioOutputDiagnosticsNotifier.removeListener(_changed);
     player.extendedVolumeEnabledNotifier.removeListener(_changed);
     CastingService.instance.remoteVolumeNotifier.removeListener(_changed);
+    CastingService.instance.isActiveNotifier.removeListener(_changed);
     Uac2Service.instance.removeStatusListener(_routeChanged);
     unawaited(_subscription?.cancel());
     super.dispose();

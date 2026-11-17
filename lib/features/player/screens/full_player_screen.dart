@@ -92,7 +92,6 @@ import 'package:flick/features/player/widgets/full_player_song_menu.dart';
 import 'package:flick/features/konnekted/library/lokal_navigation.dart';
 import 'package:flick/features/player/widgets/song_metadata_sheet.dart';
 import 'package:flick/features/player/widgets/speed_bottom_sheet.dart';
-import 'package:flick/features/settings/screens/casting_settings_screen.dart';
 import 'package:flick/features/settings/screens/equalizer_screen.dart';
 import 'package:flick/l10n/l10n.dart';
 import 'package:flick/models/audio_output_diagnostics.dart';
@@ -1343,10 +1342,6 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
   Future<void> _openEqualizer() => Navigator.of(context)
       .push(MaterialPageRoute<void>(builder: (_) => const EqualizerScreen()));
 
-  Future<void> _openCasting() => Navigator.of(context).push(
-    MaterialPageRoute<void>(builder: (_) => const CastingSettingsScreen()),
-  );
-
   /// Keep track-specific menu actions aligned with the live recording.
   Future<void> _openMore(Song song) =>
       showFullPlayerSongMenu(context, song: song, player: _player);
@@ -1828,10 +1823,9 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
       deviceLabel: displayLabel,
       brightArtwork: brightArtwork,
       outputIcon: outputIcon,
-      isCasting: isCasting,
+      song: song,
       onClose: _close,
       onOutput: () => unawaited(PlaybackOutputPicker.show(context)),
-      onCast: _openCasting,
       onMore: () => unawaited(_openMore(song)),
     );
   }

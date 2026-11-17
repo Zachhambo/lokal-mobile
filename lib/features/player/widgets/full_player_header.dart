@@ -7,6 +7,8 @@ import 'package:flick/l10n/l10n.dart';
 import 'package:flick/core/constants/app_constants.dart';
 
 import 'full_player_visuals.dart';
+import 'full_player_library_action.dart';
+import 'package:flick/models/song.dart';
 
 /// Lightweight, artwork-responsive frost shared by Android and iOS.
 ///
@@ -19,18 +21,17 @@ class FullPlayerHeader extends StatelessWidget {
     super.key,
     required this.deviceLabel,
     required this.outputIcon,
-    required this.isCasting,
+    required this.song,
     required this.onClose,
     required this.onOutput,
-    required this.onCast,
     required this.onMore,
     this.brightArtwork = false,
   });
 
   final String deviceLabel;
   final IconData outputIcon;
-  final bool isCasting;
-  final VoidCallback onClose, onOutput, onCast, onMore;
+  final Song song;
+  final VoidCallback onClose, onOutput, onMore;
 
   /// True when a bright full-bleed cover is directly behind the controls.
   /// Dark gradient/background modes keep the white foreground.
@@ -87,7 +88,7 @@ class FullPlayerHeader extends StatelessWidget {
             ),
           ),
           Padding(
-            // The right-hand Cast + More cluster is wider than Back.
+            // The right-hand Download + More cluster is wider than Back.
             // Reserve equal space on both sides to center the output pill.
             padding: const EdgeInsets.symmetric(horizontal: 102),
             child: Center(
@@ -141,12 +142,10 @@ class FullPlayerHeader extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _action(
-                  LucideIcons.cast,
-                  lokalText('Cast'),
-                  onCast,
-                  brightness,
-                  selected: isCasting,
+                FullPlayerLibraryAction(
+                  song: song,
+                  builder: (icon, label, onTap) =>
+                      _action(icon, label, onTap, brightness),
                 ),
                 const SizedBox(width: 6),
                 _action(
@@ -166,7 +165,7 @@ class FullPlayerHeader extends StatelessWidget {
   Widget _action(
     IconData icon,
     String label,
-    VoidCallback onTap,
+    VoidCallback? onTap,
     double brightness, {
     bool selected = false,
   }) => _surface(
@@ -186,12 +185,13 @@ class FullPlayerHeader extends StatelessWidget {
 
   Widget _surface({
     required String label,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
     required Widget child,
     bool selected = false,
   }) => Semantics(
     label: label,
     button: true,
+    enabled: onTap != null,
     selected: selected,
     onTap: onTap,
     child: ExcludeSemantics(

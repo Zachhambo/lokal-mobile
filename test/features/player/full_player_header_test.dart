@@ -1,4 +1,6 @@
 import 'dart:math' as math;
+import 'package:flick/models/song.dart';
+import 'package:flick/features/player/widgets/full_player_library_action.dart';
 import 'dart:ui' as ui;
 
 import 'package:flick/core/theme/app_theme.dart';
@@ -15,7 +17,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
-  Widget header(bool bright, {bool reducedMotion = false}) => MaterialApp(
+  const song = Song(
+    id: 'fixture', title: 'Song', artist: 'Artist',
+    fileType: 'FLAC', duration: Duration(minutes: 3),
+  );
+  Widget header(bool bright, {bool reducedMotion = false}) => ProviderScope(
+    overrides: [fullPlayerInLibraryProvider.overrideWith((ref, song) async => false)],
+    child: MaterialApp(
     theme: AppTheme.darkTheme,
     home: MediaQuery(
       data: MediaQueryData(disableAnimations: reducedMotion),
@@ -23,14 +31,14 @@ void main() {
         body: FullPlayerHeader(
           deviceLabel: 'Speaker',
           outputIcon: LucideIcons.speaker,
-          isCasting: false,
+          song: song,
           brightArtwork: bright,
           onClose: () {},
           onOutput: () {},
-          onCast: () {},
           onMore: () {},
         ),
       ),
+    ),
     ),
   );
   Color ink(WidgetTester tester) =>
@@ -39,7 +47,7 @@ void main() {
     for (final glyph in [
       LucideIcons.chevronLeft,
       LucideIcons.speaker,
-      LucideIcons.cast,
+      Icons.download_rounded,
       Icons.more_vert,
     ]) {
       expect(tester.widget<Icon>(find.byIcon(glyph)).color, color);
@@ -114,6 +122,9 @@ void main() {
           final semantics = tester.ensureSemantics();
           await tester.pumpWidget(
             ProviderScope(
+              overrides: [
+                fullPlayerInLibraryProvider.overrideWith((ref, song) async => false),
+              ],
               child: MaterialApp(
                 theme: AppTheme.darkTheme.copyWith(platform: platform),
                 home: MediaQuery(
@@ -137,12 +148,11 @@ void main() {
                                     FullPlayerHeader(
                                       deviceLabel: name,
                                       outputIcon: LucideIcons.speaker,
-                                      isCasting: true,
+                                      song: song,
                                       brightArtwork:
                                           value.computeLuminance() >= .18,
                                       onClose: () => calls.add('close'),
                                       onOutput: () => calls.add('output'),
-                                      onCast: () => calls.add('cast'),
                                       onMore: () => calls.add('more'),
                                     ),
                                   ],
@@ -176,7 +186,7 @@ void main() {
           );
           expect(
             pillRect.right,
-            lessThan(tester.getRect(find.byIcon(LucideIcons.cast)).left),
+            lessThan(tester.getRect(find.byIcon(Icons.download_rounded)).left),
           );
           // Dark artwork stays light-on-dark; bright artwork becomes dark
           // ink over transparent frost rather than opaque black buttons.
@@ -215,7 +225,7 @@ void main() {
                   bytes.getUint8(offset + 2),
                 );
                 final ink = tester
-                    .widget<Icon>(find.byIcon(LucideIcons.cast))
+                    .widget<Icon>(find.byIcon(Icons.download_rounded))
                     .color!;
                 final top = math.max(
                   ink.computeLuminance(),
@@ -246,9 +256,8 @@ void main() {
           }
           await tester.tap(find.byIcon(LucideIcons.chevronLeft));
           await tester.tap(find.text(name));
-          await tester.tap(find.byIcon(LucideIcons.cast));
           await tester.tap(find.byIcon(Icons.more_vert));
-          expect(calls, ['close', 'output', 'cast', 'more']);
+          expect(calls, ['close', 'output', 'more']);
           expect(find.bySemanticsLabel('More options'), findsOneWidget);
           expect(tester.takeException(), isNull);
           await tester.pumpWidget(const SizedBox.shrink());
