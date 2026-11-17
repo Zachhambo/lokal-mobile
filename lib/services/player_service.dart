@@ -871,7 +871,9 @@ class PlayerService {
   /// Mapped to ~0.01 linear gain by Rust's volume_to_gain curve.
   static const double _bitPerfectDefaultVolume = 0.25;
 
-  double get currentVolume => _currentVolume;
+  double get currentVolume => _castingService.isActive
+      ? _castingService.remoteVolumeNotifier.value ?? _currentVolume
+      : _currentVolume;
 
   /// Extended-volume boost (up to 200 %) toggle. Only the software (Rust)
   /// and system (ExoPlayer + LoudnessEnhancer) tiers may exceed 1.0.
@@ -3616,7 +3618,7 @@ class PlayerService {
   /// passthrough when the DAC has no hardware (UAC2 Feature Unit) volume —
   /// engine gain would corrupt the stream, so the slider must disable.
   bool get isVolumeAvailable =>
-      _determineCurrentTier() != VolumeTier.unavailable;
+      _castingService.isActive || _determineCurrentTier() != VolumeTier.unavailable;
 
   /// True when the DAC hardware (Feature Unit) volume is the active volume
   /// authority; the UI should display the DAC level only then. Otherwise the
@@ -8655,7 +8657,13 @@ class PlayerService {
   // ==================== Volume ====================
 
   Future<void> setVolume(double volume) async {
-    if (!volume.isFinite || _switchingDsdForVolume) return;
+    if (!volume.isFinite) return;
+    if (_castingService.isActive) {
+      // Receiver volume is independent of the phone's USB/DSD volume tier.
+      await _castingService.delegateSetVolume(volume.clamp(0.0, 1.0));
+      return;
+    }
+    if (_switchingDsdForVolume) return;
     final tier = _determineCurrentTier();
     final tierSupportsBoost =
         _extendedVolumeEnabled &&
@@ -8663,13 +8671,6 @@ class PlayerService {
     final maxForTier = tierSupportsBoost ? 2.0 : 1.0;
     final clampedVolume = volume.clamp(0.0, maxForTier).toDouble();
 
-    if (_castingService.isActive) {
-      // Cast devices cannot exceed 100 %.
-      _currentVolume = clampedVolume.clamp(0.0, 1.0);
-      await _castingService.delegateSetVolume(_currentVolume);
-      await _reconcileSystemVolumeBoost(0.0);
-      return;
-    }
     // The active transport, not the PCM bit-perfect preference, protects both
     // DoP and native DSD. Never update the UI for an ignored/failed request.
     if (_usbDsdWireActive) {

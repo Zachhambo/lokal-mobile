@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import android.os.Handler
 import android.os.Looper
+import android.view.KeyEvent
 import androidx.mediarouter.media.MediaRouteSelector
 import androidx.mediarouter.media.MediaRouter
 import com.google.android.gms.cast.CastMediaControlIntent
@@ -158,7 +159,8 @@ class CastController(private val context: Context) {
             }
         }
         override fun onRouteVolumeChanged(router: MediaRouter, route: MediaRouter.RouteInfo) {
-            if (route.playbackType == MediaRouter.RouteInfo.PLAYBACK_TYPE_REMOTE && route.volumeMax > 0) {
+            if (route.id == activeRouteId && route.isSelected &&
+                route.playbackType == MediaRouter.RouteInfo.PLAYBACK_TYPE_REMOTE && route.volumeMax > 0) {
                 emit(
                     mapOf(
                         "event" to "volume",
@@ -446,6 +448,23 @@ class CastController(private val context: Context) {
     fun seek(positionMs: Long, result: MethodChannel.Result) = command(result) {
         it.seek(MediaSeekOptions.Builder().setPosition(positionMs.coerceAtLeast(0)).build())
     }
+    /** FlutterActivity pins volumeControlStream to local music. Route
+     * foreground volume keys explicitly; CAF keeps background ownership.
+     */
+    fun dispatchVolumeKey(event: KeyEvent): Boolean {
+        val route = mediaRouter.selectedRoute
+        val session = connectedSession ?: castContext?.sessionManager?.currentCastSession
+        val connected = session?.isConnected == true &&
+            session !== abandonedSession && !disconnectRequested &&
+            route.id == activeRouteId &&
+            route.volumeHandling == MediaRouter.RouteInfo.PLAYBACK_VOLUME_VARIABLE
+        return handleCastVolumeKey(event, connected) { direction ->
+            // Relative route commands preserve rapid/held key increments
+            // without calculating a new target from a stale session snapshot.
+            route.requestUpdateVolume(direction)
+        }
+    }
+
     fun setVolume(volume: Double, result: MethodChannel.Result) {
         // The UI and physical volume keys control *device* volume. CAF's
         // RemoteMediaClient.setStreamVolume is a separate per-track gain and

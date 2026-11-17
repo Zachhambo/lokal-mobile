@@ -1,4 +1,5 @@
 import 'package:flick/models/audio_engine_type.dart';
+import 'package:flick/services/casting/casting_service.dart';
 import 'package:flick/models/audio_output_diagnostics.dart';
 import 'package:flick/services/android_audio_processing_service.dart';
 import 'package:flick/services/player_service.dart';
@@ -141,6 +142,20 @@ void main() {
     }
     expect(player.writes, [0.3, 0.3, 0.3]);
     expect(systemWrites, isEmpty);
+  });
+
+  test('receiver volume ticks refresh the open Cast slider without phone writes', () {
+    player.isCasting = true;
+    var changes = 0;
+    control.addListener(() => changes++);
+    player.currentVolume = .42;
+    CastingService.instance.remoteVolumeNotifier.value = .42;
+    expect(changes, 1);
+    expect(control.value, .42);
+    expect(control.usesSystemVolume, isFalse);
+    expect(systemWrites, isEmpty);
+    expect(player.writes, isEmpty);
+    CastingService.instance.remoteVolumeNotifier.value = null;
   });
 
   test('protected bit-perfect routes reject system and engine writes', () async {
