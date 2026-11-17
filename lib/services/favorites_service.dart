@@ -23,7 +23,7 @@ class FavoritesService {
 
   static Map<String, Object?> _capture(Song song) => {
     'id': song.id, 'title': song.title, 'artist': song.artist,
-    'album': song.album, 'albumArt': song.albumArt,
+    'album': song.album, 'albumArtist': song.albumArtist, 'albumArt': song.albumArt,
     'durationMs': song.duration.inMilliseconds, 'codec': song.fileType,
     'startOffsetMs': song.startOffsetMs, 'endOffsetMs': song.endOffsetMs,
     'isExternal': song.isExternal,
@@ -414,9 +414,10 @@ class FavoritesService {
     await _mutate(() async {
       final before = Set<String>.of(_favoriteIds);
       _favoriteIds.remove(_canonicalId(songId));
-      await _forgetSong(songId);
       await _saveLikeRanks(before: before, after: _favoriteIds);
+      // Keep the saved online metadata until the unlike has been journaled.
       await _saveFavorites();
+      await _forgetSong(songId);
     });
   }
 
@@ -433,9 +434,9 @@ class FavoritesService {
       if (_favoriteIds.contains(canonicalId)) {
         final before = Set<String>.of(_favoriteIds);
         _favoriteIds.remove(canonicalId);
-        await _forgetSong(songId);
         await _saveLikeRanks(before: before, after: _favoriteIds);
         await _saveFavorites();
+        await _forgetSong(songId);
         return false;
       }
       if (song != null) await _rememberSong(song);
@@ -486,9 +487,11 @@ class FavoritesService {
     await _mutate(() async {
       _favoriteIds.clear();
       final prefs = await SharedPreferences.getInstance();
+      // A bulk clear must also export the online-only unlikes before their
+      // metadata is removed; the desktop cannot reconstruct these identities.
+      await _saveFavorites();
       await prefs.remove(_onlineMetadataKey);
       await prefs.remove(_likedOrderKey);
-      await _saveFavorites();
     });
   }
 }
