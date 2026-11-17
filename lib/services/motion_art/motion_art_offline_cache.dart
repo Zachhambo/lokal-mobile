@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
 import 'animated_artwork_service.dart';
+import 'local_motion_hls_server.dart';
 
 /// Persistent, completed video clips (not merely cached motion-art URLs).
 ///
@@ -104,7 +105,16 @@ class MotionArtOfflineCache {
     for (final source in {if (preferred != null) preferred, if (alternate != null) alternate}) {
       final file = await localFile(source);
       if (file != null) {
-        return (url: file.uri.toString(), cachedSource: source);
+        try {
+          // AVPlayer needs an HTTP HLS source even when every segment is on
+          // disk. The loopback-only server serves these files without data.
+          final url = file.path.endsWith('.m3u8')
+              ? (await LocalMotionHlsServer.serve(file)).toString()
+              : file.uri.toString();
+          return (url: url, cachedSource: source);
+        } catch (error) {
+          devLog('[MotionArt] local HLS playback unavailable: $error');
+        }
       }
     }
     if (preferred == null) return null;
@@ -127,11 +137,42 @@ class MotionArtOfflineCache {
           name != 'playlist.m3u8') return null;
       final file = File('${dir.path}/$name');
       if (!await file.exists() || await file.length() == 0) return null;
+      if (name == 'playlist.m3u8' && !await _hasCompleteHlsAssets(file)) {
+        return null;
+      }
       await file.setLastModified(DateTime.now());
       return file;
     } catch (_) {
       return null;
     }
+  }
+
+  /// HLS requires every local media segment and initialization map.
+  /// Reject incomplete caches before a native decoder opens them offline.
+  Future<bool> _hasCompleteHlsAssets(File playlist) async {
+    final body = await playlist.readAsString();
+    if (!body.contains('#EXT-X-ENDLIST')) return false;
+    final names = <String>{};
+    for (final raw in body.split(RegExp(r'\r?\n'))) {
+      final line = raw.trim();
+      if (line.startsWith('#EXT-X-MAP:')) {
+        final match = RegExp(r'URI="([^"]+)"').firstMatch(line);
+        if (match == null) return false;
+        names.add(match[1]!);
+      } else if (line.isNotEmpty && !line.startsWith('#')) {
+        names.add(line);
+      }
+    }
+    if (names.isEmpty || names.length > 150) return false;
+    final allowed = RegExp(r'^asset_[0-9]+\.(?:mp4|m4s|ts|aac|bin)$');
+    for (final name in names) {
+      if (!allowed.hasMatch(name)) return false;
+      final segment = File('${playlist.parent.path}/$name');
+      if (!await segment.exists() || await segment.length() == 0) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// Invalidate a video that a native decoder could not open. Future plays
