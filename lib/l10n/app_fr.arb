@@ -1,9 +1,5 @@
 {
   "@@locale": "fr",
-  "aLittleRecordOfWhatStayed": "Un petit enregistrement de ce qui est resté en boucle.",
-  "@aLittleRecordOfWhatStayed": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:476"
-  },
   "aNewerFlickBuildIsOn": "Une version plus récente de Lokal est sur le Play Store.",
   "@aNewerFlickBuildIsOn": {
     "description": "lib/features/menu/screens/menu_screen.dart:1234"
@@ -3571,10 +3567,6 @@
   "keepTheSessionMovingOrHead": "Continuez la session ou revenez directement au joueur.",
   "@keepTheSessionMovingOrHead": {
     "description": "lib/features/menu/screens/menu_screen.dart:1313"
-  },
-  "keepYourReplay": "Conservez votre Replay.",
-  "@keepYourReplay": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:465"
   },
   "keeping": "Conserver • {type} • {br}",
   "@keeping": {

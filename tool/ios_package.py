@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 
 from ios_native_symbols import inspect_soulseek_images
-from ios_widget_package import validate_widget_info
+from ios_widget_package import directory_widgets
 
 
 def command(*args: str) -> str:
@@ -84,17 +84,8 @@ def inspect_bundle(app: Path) -> dict:
         metadata = plistlib.loads((framework / "Info.plist").read_bytes())
         binaries.append(framework / metadata["CFBundleExecutable"])
     binaries.extend(app.glob("Frameworks/*.dylib"))
-    extensions = list(app.glob('PlugIns/*.appex'))
-    widgets = []
-    if extensions:
-        if len(extensions) != 1 or extensions[0].name != 'LokalWidgets.appex':
-            raise ValueError('Unexpected app extensions in iPhone package')
-        widget_info = plistlib.loads((extensions[0] / 'Info.plist').read_bytes())
-        widget = validate_widget_info(info, widget_info)
-        widgets.append(widget)
-        binaries.append(app / widget['executable'])
-    elif info.get('LokalWidgetAppGroup'):
-        raise ValueError('Configured widget extension is missing from app')
+    widgets = directory_widgets(app, info)
+    binaries.extend(app / widget['executable'] for widget in widgets)
     smb = inspect_smb(app, executable, binaries)
     soulseek = inspect_soulseek_images(executable.relative_to(app).as_posix(),
         [binary.relative_to(app).as_posix() for binary in binaries],

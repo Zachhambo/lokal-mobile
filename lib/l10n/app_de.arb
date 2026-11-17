@@ -1,9 +1,5 @@
 {
   "@@locale": "de",
-  "aLittleRecordOfWhatStayed": "Eine kleine Aufzeichnung dessen, was in der Wiederholung blieb.",
-  "@aLittleRecordOfWhatStayed": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:476"
-  },
   "aNewerFlickBuildIsOn": "Ein neuerer Lokal-Build ist im Play Store erhältlich.",
   "@aNewerFlickBuildIsOn": {
     "description": "lib/features/menu/screens/menu_screen.dart:1234"
@@ -3571,10 +3567,6 @@
   "keepTheSessionMovingOrHead": "Halten Sie die Sitzung am Laufen oder gehen Sie direkt zurück zum Player.",
   "@keepTheSessionMovingOrHead": {
     "description": "lib/features/menu/screens/menu_screen.dart:1313"
-  },
-  "keepYourReplay": "Behalten Sie Ihre Wiederholung.",
-  "@keepYourReplay": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:465"
   },
   "keeping": "Behalten • {type} • {br}",
   "@keeping": {

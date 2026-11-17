@@ -22,12 +22,7 @@ import UserNotifications
   func openWidgetURLs(_ urls: [URL]) {
     for url in urls where url.scheme == "konnekted" && url.host == "widget" {
       if let widgetBridge { widgetBridge.open(url) }
-      else if url.absoluteString.utf8.count <= 2048 {
-        let key = "lokal.widget.pending-actions.v1"
-        var pending = UserDefaults.standard.stringArray(forKey: key) ?? []
-        if !pending.contains(url.absoluteString) { pending.append(url.absoluteString) }
-        UserDefaults.standard.set(Array(pending.suffix(8)), forKey: key)
-      }
+      else { LokalWidgetBridge.capture(url) }
     }
   }
 

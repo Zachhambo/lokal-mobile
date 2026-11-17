@@ -22,6 +22,8 @@ void main() {
     expect(IosWidgetCommand.parse('konnekted://widget')!.action, 'open');
     expect(IosWidgetCommand.parse(link('pause', track: alias))!.track, alias);
     for (final raw in [
+      'konnekted://widget/open?command=%FF',
+      'konnekted://widget/%FF',
       'https://widget/play', 'konnekted://user@widget/open',
       'konnekted://widget:42/open', 'konnekted://widget/open#fragment',
       link('next'), link('toggle', track: alias), link('play', track: '/music/file'),
@@ -97,4 +99,56 @@ void main() {
     expect(calls, ['takePendingActions', 'played', 'acknowledgeAction']);
     await handler.dispose();
   });
+  test('disposal preserves commands that have not executed', () async {
+    const channel = MethodChannel('test/disposed-widget-actions');
+    final first = link('play', track: alias);
+    final second = link('queue', id: '22345678-1234-1234-1234-123456789abc');
+    final gate = Completer<void>();
+    final started = Completer<void>();
+    final executed = <String>[];
+    final acknowledged = <String>[];
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'takePendingActions') return [first, second];
+      if (call.method == 'acknowledgeAction') acknowledged.add(call.arguments as String);
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final handler = IosWidgetActions(channel: channel, currentAlias: () => alias,
+      clock: () => now, onStale: () async {}, execute: (command) async {
+        executed.add(command.action);
+        started.complete();
+        await gate.future;
+      });
+    final draining = handler.drain();
+    await started.future;
+    await handler.dispose();
+    gate.complete();
+    await draining;
+    expect(executed, ['play']);
+    expect(acknowledged, [first]);
+  });
+
+  test('malformed UTF-8 is acknowledged without blocking a valid later action', () async {
+    const channel = MethodChannel('test/malformed-widget-actions');
+    final valid = link('queue');
+    final acknowledged = <String>[];
+    final executed = <String>[];
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'takePendingActions') return ['konnekted://widget/open?command=%FF', valid];
+      if (call.method == 'acknowledgeAction') acknowledged.add(call.arguments as String);
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final handler = IosWidgetActions(channel: channel, currentAlias: () => alias,
+      clock: () => now, onStale: () async {}, execute: (command) async {
+        executed.add(command.action);
+      });
+    await handler.drain();
+    expect(executed, ['queue']);
+    expect(acknowledged.length, 2);
+    await handler.dispose();
+  });
+
 }

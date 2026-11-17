@@ -1,9 +1,5 @@
 {
   "@@locale": "es",
-  "aLittleRecordOfWhatStayed": "Un pequeño registro de lo que quedó repetido.",
-  "@aLittleRecordOfWhatStayed": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:476"
-  },
   "aNewerFlickBuildIsOn": "Hay una versión más nueva de Lokal en Play Store.",
   "@aNewerFlickBuildIsOn": {
     "description": "lib/features/menu/screens/menu_screen.dart:1234"
@@ -3571,10 +3567,6 @@
   "keepTheSessionMovingOrHead": "Mantenga la sesión en movimiento o regrese directamente al reproductor.",
   "@keepTheSessionMovingOrHead": {
     "description": "lib/features/menu/screens/menu_screen.dart:1313"
-  },
-  "keepYourReplay": "Mantenga su repetición.",
-  "@keepYourReplay": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:465"
   },
   "keeping": "Manteniendo • {type} • {br}",
   "@keeping": {

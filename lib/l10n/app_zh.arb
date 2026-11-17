@@ -1,5 +1,4 @@
 {
-  "aLittleRecordOfWhatStayed": "记录下那些被你反复播放的旋律。",
   "aNewerFlickBuildIsOn": "Play Store 上有更新的 Lokal 版本。",
   "aPlaylistWithThisNameAlready": "已存在同名播放列表",
   "aSmoothContinuousWaveAcrossFrequencies": "横跨各频率的平滑连续波形",
@@ -726,7 +725,6 @@
   "keepListeningWithFlick": "继续用 Lokal 听歌",
   "keepPlaybackPausedWhenADevice": "设备重新连接时保持暂停播放",
   "keepTheSessionMovingOrHead": "让音乐继续，或直接回到播放器。",
-  "keepYourReplay": "留住你的回顾。",
   "keeping": "保留 • {type} • {br}",
   "keepingOfToRemove": "保留 {keptCount}/{arg1} • 待移除 {removeCount}",
   "keepingThisVersion": "保留此版本",

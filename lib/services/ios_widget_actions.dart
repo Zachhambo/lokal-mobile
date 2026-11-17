@@ -11,6 +11,14 @@ class IosWidgetCommand {
 
   static IosWidgetCommand? parse(String raw) {
     if (raw.length > 2048) return null;
+    try {
+      return _parse(raw);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  static IosWidgetCommand? _parse(String raw) {
     final uri = Uri.tryParse(raw);
     if (uri == null || uri.scheme != 'konnekted' || uri.host != 'widget' ||
         uri.userInfo.isNotEmpty || uri.hasPort || uri.hasFragment ||
@@ -73,30 +81,32 @@ class IosWidgetActions {
     if (_disposed) return;
     final rows = await _channel.invokeListMethod<String>('takePendingActions') ?? const [];
     for (final raw in rows.take(8)) {
-      await dispatch(raw);
+      if (_disposed || !await dispatch(raw)) break;
       await _channel.invokeMethod<void>('acknowledgeAction', raw);
     }
   }
 
-  Future<void> dispatch(String raw) {
+  Future<bool> dispatch(String raw) {
     final next = _tail.then((_) async {
-      if (_disposed) return;
+      if (_disposed) return false;
       final command = IosWidgetCommand.parse(raw);
-      if (command == null) return;
+      if (command == null) return true;
       final prefs = await SharedPreferences.getInstance();
       final receipts = prefs.getStringList(receiptKey) ?? const <String>[];
-      if (_disposed || (command.id != null && receipts.contains(command.id))) return;
+      if (_disposed) return false;
+      if (command.id != null && receipts.contains(command.id)) return true;
       final controlsCurrent = const {'play', 'pause', 'next', 'previous', 'radio'}.contains(command.action);
       if (!const {'open', 'queue', 'flow'}.contains(command.action) &&
           (!command.freshAt(_clock()) || (controlsCurrent && command.track != currentAlias()))) {
         await onStale();
-        return;
+        return true;
       }
       await execute(command);
       if (command.id != null) {
         await prefs.setStringList(receiptKey,
           [command.id!, ...receipts.where((id) => id != command.id)].take(64).toList());
       }
+      return true;
     });
     _tail = next.then<void>((_) {}, onError: (Object _, StackTrace _) {});
     return next;

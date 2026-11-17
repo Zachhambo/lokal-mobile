@@ -59,6 +59,7 @@ jobs:
           files = [
               'ios/Widgets/Contracts/LokalWidgetSnapshot.swift',
               'ios/Widgets/Contracts/LokalWidgetGroup.swift',
+              'ios/Widgets/Contracts/LokalWidgetLink.swift',
               'ios/Widgets/Storage/LokalWidgetStore.swift',
               'ios/Widgets/Publication/LokalWidgetPublisher.swift',
               'ios/Runner/LokalWidgetBridge.swift',
@@ -99,6 +100,10 @@ jobs:
           xcodebuild -version
           swiftc -swift-version 6 -warnings-as-errors ios/Widgets/Contracts/LokalWidgetSnapshot.swift ios/Widgets/Tests/main.swift -o "$RUNNER_TEMP/lokal-widget-contracts"
           "$RUNNER_TEMP/lokal-widget-contracts" test/fixtures/ios_widget/snapshot_contract.json
+      - name: Verify repeated taps and durable invocation identities
+        run: |
+          swiftc -swift-version 6 -warnings-as-errors ios/Widgets/Contracts/LokalWidgetLink.swift ios/Widgets/LinkTests/main.swift -o "$RUNNER_TEMP/lokal-widget-links"
+          "$RUNNER_TEMP/lokal-widget-links"
       - name: Exercise native widget presentation and timeline policy
         run: |
           swiftc -swift-version 6 -warnings-as-errors ios/Widgets/Contracts/LokalWidgetSnapshot.swift ios/Widgets/Storage/LokalWidgetStore.swift ios/Widgets/Presentation/LokalWidgetPresentation.swift ios/Widgets/Presentation/LokalWidgetDisplayArtwork.swift ios/Widgets/PresentationTests/main.swift -o "$RUNNER_TEMP/lokal-widget-presentation-contracts"

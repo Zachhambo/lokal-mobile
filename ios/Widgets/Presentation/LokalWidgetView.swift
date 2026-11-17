@@ -156,7 +156,19 @@ struct LokalWidgetView: View {
       } else {
         ProgressView(value: Double(model.positionMs), total: Double(max(1, model.durationMs)))
       }
-    }.progressViewStyle(.linear).frame(height: 3).clipped().accessibilityHidden(true)
+    }.progressViewStyle(.linear).frame(height: 3).clipped()
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(Text(lokalWidgetText("Playback progress")))
+      .accessibilityValue(progressValue)
+  }
+
+  private var progressValue: Text {
+    let duration = Duration.seconds(Double(model.durationMs) / 1000).formatted(.time(pattern: .hourMinuteSecond))
+    if let interval = model.progressInterval {
+      return Text("\(Text(timerInterval: interval, countsDown: false)) / \(duration)")
+    }
+    let position = Duration.seconds(Double(model.positionMs) / 1000).formatted(.time(pattern: .hourMinuteSecond))
+    return Text(position + " / " + duration)
   }
 
   private var transport: some View {
@@ -269,9 +281,22 @@ struct LokalWidgetView: View {
     case .accessoryInline:
       Label(current.map { title($0) } ?? "Lokal", systemImage: model.isPlaying ? "waveform" : "music.note")
     case .accessoryCircular:
-      Gauge(value: Double(model.positionMs), in: 0...Double(max(1, model.durationMs))) {
-        Image(systemName: model.isPlaying ? "waveform" : "opticaldisc")
-      }.gaugeStyle(.accessoryCircularCapacity).accessibilityLabel(Text(summary))
+      Group {
+        if let interval = model.progressInterval {
+          ProgressView(timerInterval: interval, countsDown: false) {
+            Image(systemName: "waveform")
+          } currentValueLabel: {
+            Image(systemName: "waveform")
+          }.progressViewStyle(.circular)
+        } else {
+          Gauge(value: Double(model.positionMs), in: 0...Double(max(1, model.durationMs))) {
+            Image(systemName: model.isPlaying ? "waveform" : "opticaldisc")
+          }.gaugeStyle(.accessoryCircularCapacity)
+        }
+      }
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(Text(summary + ". " + lokalWidgetText("Playback progress")))
+      .accessibilityValue(progressValue)
     default:
       HStack(spacing: 8) {
         if let track = current {

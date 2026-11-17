@@ -116,12 +116,6 @@ abstract class AppLocalizations {
     Locale('zh'),
   ];
 
-  /// lib/features/recap/screens/listening_recap_screen.dart:476
-  ///
-  /// In en, this message translates to:
-  /// **'A little record of what stayed on repeat.'**
-  String get aLittleRecordOfWhatStayed;
-
   /// lib/features/menu/screens/menu_screen.dart:1234
   ///
   /// In en, this message translates to:
@@ -4477,12 +4471,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Keep the session moving or head straight back to the player.'**
   String get keepTheSessionMovingOrHead;
-
-  /// lib/features/recap/screens/listening_recap_screen.dart:465
-  ///
-  /// In en, this message translates to:
-  /// **'Keep your Replay.'**
-  String get keepYourReplay;
 
   /// lib/features/settings/screens/duplicate_cleaner_screen.dart:1016
   ///

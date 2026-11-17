@@ -1,8 +1,10 @@
 import io
 import plistlib
 import unittest
+import tempfile
+from pathlib import Path
 import zipfile
-from ios_widget_package import GROUP, BUNDLE, zip_widgets
+from ios_widget_package import GROUP, BUNDLE, zip_widgets, directory_widgets
 
 class WidgetPackageTests(unittest.TestCase):
     def fixture(self, change=None, extra=False):
@@ -39,6 +41,26 @@ class WidgetPackageTests(unittest.TestCase):
         data, host = self.fixture(extra=True)
         with zipfile.ZipFile(data) as archive, self.assertRaisesRegex(ValueError, 'extensions'):
             zip_widgets(archive, 'Payload/Runner.app/Info.plist', host)
+
+    def test_nested_or_relocated_extensions_fail_both_audits(self):
+        for extra in ['PlugIns/LokalWidgets.appex/PlugIns/Extra.appex/Info.plist',
+                      'Resources/Extra.appex/Info.plist']:
+            data, host = self.fixture()
+            with zipfile.ZipFile(data, 'a') as archive:
+                archive.writestr('Payload/Runner.app/' + extra, b'fixture')
+            with zipfile.ZipFile(data) as archive:
+                with self.assertRaisesRegex(ValueError, 'extensions'):
+                    zip_widgets(archive, 'Payload/Runner.app/Info.plist', host)
+                with tempfile.TemporaryDirectory() as folder:
+                    archive.extractall(folder)
+                    with self.assertRaisesRegex(ValueError, 'extensions'):
+                        directory_widgets(Path(folder) / 'Payload/Runner.app', host)
+
+    def test_exact_widget_passes_directory_audit(self):
+        data, host = self.fixture()
+        with zipfile.ZipFile(data) as archive, tempfile.TemporaryDirectory() as folder:
+            archive.extractall(folder)
+            self.assertEqual(directory_widgets(Path(folder) / 'Payload/Runner.app', host)[0]['bundle_id'], BUNDLE)
 
 if __name__ == '__main__':
     unittest.main()

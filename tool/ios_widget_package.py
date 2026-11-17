@@ -26,8 +26,10 @@ def validate_widget_info(host, widget):
 
 def zip_widgets(archive, host_plist, host):
     prefix = host_plist.removesuffix('Info.plist')
-    roots = {name.split('.appex/', 1)[0] + '.appex/' for name in archive.namelist()
-             if '.appex/' in name}
+    roots = {'/'.join(parts[:index + 1]) + '/'
+             for name in archive.namelist()
+             for parts in [name.rstrip('/').split('/')]
+             for index, part in enumerate(parts) if part.endswith('.appex')}
     if not roots:
         if host.get('LokalWidgetAppGroup'):
             raise ValueError('Configured widget extension is missing from IPA')
@@ -38,5 +40,21 @@ def zip_widgets(archive, host_plist, host):
     widget = plistlib.loads(archive.read(expected + 'Info.plist'))
     result = validate_widget_info(host, widget)
     if prefix + result['executable'] not in archive.namelist():
+        raise ValueError('Missing widget extension executable')
+    return [result]
+
+
+def directory_widgets(app, host):
+    roots = set(app.rglob('*.appex'))
+    if not roots:
+        if host.get('LokalWidgetAppGroup'):
+            raise ValueError('Configured widget extension is missing from app')
+        return []
+    expected = app / 'PlugIns/LokalWidgets.appex'
+    if roots != {expected}:
+        raise ValueError('Unexpected app extensions in iPhone package')
+    widget = plistlib.loads((expected / 'Info.plist').read_bytes())
+    result = validate_widget_info(host, widget)
+    if not (app / result['executable']).is_file():
         raise ValueError('Missing widget extension executable')
     return [result]

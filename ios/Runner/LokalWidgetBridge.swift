@@ -125,15 +125,23 @@ final class LokalWidgetBridge: @unchecked Sendable {
 
 
   /// URLs arrive through either the cold scene or an already-running app.
-  /// Capture before Flutter/onboarding is ready, then drain exactly once.
+  /// Capture before Flutter/onboarding is ready; retain until acknowledged.
   @discardableResult
   func open(_ url: URL) -> Bool {
-    guard url.scheme == "konnekted", url.host == "widget",
-          url.absoluteString.utf8.count <= 2048 else { return false }
-    var pending = UserDefaults.standard.stringArray(forKey: actionKey) ?? []
-    if !pending.contains(url.absoluteString) { pending.append(url.absoluteString) }
-    UserDefaults.standard.set(Array(pending.suffix(8)), forKey: actionKey)
+    guard Self.capture(url) else { return false }
     if actionHandlerReady { actions.invokeMethod("dispatchPending", arguments: nil) }
+    return true
+  }
+
+  /// The OS delivery marks a new invocation, including repeated taps on the
+  /// same rendered link. Reading the durable inbox never generates a new ID.
+  @discardableResult
+  static func capture(_ url: URL) -> Bool {
+    guard let invocation = LokalWidgetLink.invocation(url) else { return false }
+    let key = "lokal.widget.pending-actions.v1"
+    var pending = UserDefaults.standard.stringArray(forKey: key) ?? []
+    pending.append(invocation.absoluteString)
+    UserDefaults.standard.set(Array(pending.suffix(8)), forKey: key)
     return true
   }
 

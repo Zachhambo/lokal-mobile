@@ -66,7 +66,7 @@ class IosWidgetIntegration {
     final data = ref.read(flowControllerProvider).value;
     final library = ref.read(flowLibraryProvider).value;
     if (data == null || library == null) return;
-    _recommendations = library.mix(data, DateTime.now()).take(12).toList(growable: false);
+    _recommendations = library.mix(data, DateTime.now()).take(3).toList(growable: false);
     runtime.sampler.setRecommendations(_recommendations,
       kind: _recommendations.isEmpty ? IosWidgetFlowKind.none : IosWidgetFlowKind.flow,
       status: 'Your Flow');
@@ -85,9 +85,10 @@ class IosWidgetIntegration {
         openQueue();
       case 'play':
       case 'pause':
-        final wantPlaying = command.action == 'play';
-        if (ref.read(playerProvider).isPlaying != wantPlaying) {
-          await player.togglePlayPause();
+        if (command.action == 'play') {
+          await player.resume();
+        } else {
+          await player.pause();
         }
       case 'next':
         await player.next();

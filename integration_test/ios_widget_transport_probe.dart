@@ -1,4 +1,3 @@
-import 'package:flick/models/ios_widget_snapshot.dart';
 import 'package:flick/services/ios_widget_method_channel_transport.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,16 +13,8 @@ Future<void> probeIosWidgetTransport(
     const Duration(seconds: 5),
   );
   if (capability.available) {
-    final receipt = await transport.publish(
-      IosWidgetSnapshot.fromJson({
-        'schemaVersion': 1,
-        'revision': capability.committedRevision + 1,
-        'updatedAtMs': DateTime.now().millisecondsSinceEpoch,
-      }),
-      const {},
-      reloadTimelines: false,
-    ).timeout(const Duration(seconds: 5));
-    expect(receipt.revision, greaterThan(capability.committedRevision));
+    // Observe the live publisher without replacing the user's music snapshot.
+    expect(capability.committedRevision, greaterThanOrEqualTo(0));
   } else {
     expect(capability.unavailableReason, isNotNull);
   }
