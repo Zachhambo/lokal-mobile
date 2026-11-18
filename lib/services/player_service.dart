@@ -1022,6 +1022,7 @@ class PlayerService {
   final List<Song> _playlist = [];
   final List<Song> _originalPlaylist = []; // For shuffle restore
   final List<int?> _playlistQueueEntryIds = [];
+  final List<Object> _playlistOccurrences = [];
   final List<_QueueEntry> _queuedEntries = [];
   int _currentIndex = -1;
   bool _isRebuildingPlaylist =
@@ -2031,6 +2032,7 @@ class PlayerService {
     _playlist
       ..clear()
       ..addAll(songs);
+    _resetPlaylistOccurrences();
     _originalPlaylist
       ..clear()
       ..addAll(songs);
@@ -2041,6 +2043,23 @@ class PlayerService {
     _notifyQueueChanged();
     _notifyUpNextChanged();
   }
+
+  void _resetPlaylistOccurrences() {
+    _playlistOccurrences
+      ..clear()
+      ..addAll(List<Object>.generate(_playlist.length, (_) => Object()));
+  }
+
+  Object? castPlaylistOccurrence(int index) =>
+      index >= 0 && index < _playlistOccurrences.length
+      ? _playlistOccurrences[index]
+      : null;
+
+  Song? castPlaylistSongAt(int index) =>
+      index >= 0 && index < _playlist.length ? _playlist[index] : null;
+
+  int castPlaylistOccurrenceIndex(Object occurrence) =>
+      _playlistOccurrences.indexOf(occurrence);
 
   List<String> _playlistNonQueueIds() {
     final ids = <String>[];
@@ -2367,6 +2386,7 @@ class PlayerService {
     for (var i = 0; i < _queuedEntries.length; i++) {
       final entry = _queuedEntries[i];
       _playlist.insert(insertIndex + i, entry.song);
+      _playlistOccurrences.insert(insertIndex + i, Object());
       _playlistQueueEntryIds.insert(insertIndex + i, entry.id);
     }
     _notifyUpNextChanged();
@@ -2393,6 +2413,7 @@ class PlayerService {
     _queuedEntries.removeWhere((entry) => entry.id == queueEntryId);
     if (playlistIndex != -1) {
       _playlist.removeAt(playlistIndex);
+      _playlistOccurrences.removeAt(playlistIndex);
       _playlistQueueEntryIds.removeAt(playlistIndex);
       if (playlistIndex < _currentIndex) {
         _setCurrentIndex(_currentIndex - 1);
@@ -4897,6 +4918,39 @@ class PlayerService {
     await _showFloatingPlayerOverlay();
   }
 
+  /// Follow a receiver-owned queue occurrence without restarting its audio.
+  Future<bool> followCastPlaylistTrack(
+    Object occurrence,
+    Song receiverSong, {
+    required bool Function() stillCurrent,
+    required Duration position,
+    required bool playing,
+  }) async {
+    var followed = false;
+    await _enqueuePlaybackRequest(() async {
+      if (!_castingService.isActive || !stillCurrent()) return;
+      final index = castPlaylistOccurrenceIndex(occurrence);
+      if (index < 0) return;
+      final song = _playlist[index];
+      if (song.id != receiverSong.id ||
+          shouldReplaceQueuedAudioSource(song, receiverSong)) {
+        return;
+      }
+      _setCurrentIndex(index);
+      currentSongNotifier.value = song;
+      _playbackManager.updateTrack(song);
+      _playbackManager.invalidateLoadedTrack();
+      _consumeQueueEntryAt(index);
+      durationNotifier.value = song.duration;
+      positionNotifier.value = position;
+      isPlayingNotifier.value = playing;
+      _updatePriorityAnchor();
+      followed = true;
+      await _updateNotificationState();
+    }, remoteOutput: true);
+    return followed;
+  }
+
   /// The receiver owns its clock. Its completion bypasses the paused local
   /// engine's gapless/crossfade flags and advances the logical queue once.
   Future<void> castTrackFinished(String trackId, String loadId) =>
@@ -6924,6 +6978,7 @@ class PlayerService {
         _playlist
           ..clear()
           ..addAll(shuffled);
+        _resetPlaylistOccurrences();
         _playlistQueueEntryIds
           ..clear()
           ..addAll(List<int?>.filled(shuffled.length, null));
@@ -8475,6 +8530,7 @@ class PlayerService {
 
     final current = currentSongNotifier.value;
     final oldCurrentIndex = _currentIndex;
+    final currentOccurrence = castPlaylistOccurrence(oldCurrentIndex);
     final basePlaylist = <Song>[];
     for (var i = 0; i < _playlist.length; i++) {
       if (_playlistQueueEntryIds[i] == null) {
@@ -8497,6 +8553,7 @@ class PlayerService {
     _playlist
       ..clear()
       ..addAll(reorderedBasePlaylist);
+    _resetPlaylistOccurrences();
     _playlistQueueEntryIds
       ..clear()
       ..addAll(List<int?>.filled(reorderedBasePlaylist.length, null));
@@ -8505,6 +8562,11 @@ class PlayerService {
     }
     if (_currentIndex < 0 && _playlist.isNotEmpty) {
       _setCurrentIndex(0);
+    }
+    if (currentOccurrence != null &&
+        _currentIndex >= 0 &&
+        _playlist[_currentIndex].id == current?.id) {
+      _playlistOccurrences[_currentIndex] = currentOccurrence;
     }
     _insertQueuedEntriesAfterCurrent();
 
@@ -8976,6 +9038,7 @@ class PlayerService {
     if (_playlist.isEmpty) return;
     final at = _playlist.length;
     _playlist.add(song);
+    _playlistOccurrences.add(Object());
     _playlistQueueEntryIds.add(null);
     if (!_usingRustBackend) {
       if (requiresOnDemandAndroidSequence(_playlist)) {
@@ -9006,6 +9069,7 @@ class PlayerService {
         _playlist.length,
       );
       _playlist.insert(insertIndex, song);
+      _playlistOccurrences.insert(insertIndex, Object());
       _playlistQueueEntryIds.insert(insertIndex, entry.id);
 
       if (!_usingRustBackend) {
@@ -9066,6 +9130,7 @@ class PlayerService {
       final queueId = _playlistQueueEntryIds[i];
       if (queueId != null && queuedIds.contains(queueId)) {
         _playlist.removeAt(i);
+        _playlistOccurrences.removeAt(i);
         _playlistQueueEntryIds.removeAt(i);
         if (i < _currentIndex) {
           _setCurrentIndex(_currentIndex - 1);
@@ -9088,6 +9153,7 @@ class PlayerService {
       final keepCount = (_currentIndex + 1).clamp(0, _playlist.length);
       if (keepCount < _playlist.length) {
         _playlist.removeRange(keepCount, _playlist.length);
+        _playlistOccurrences.removeRange(keepCount, _playlistOccurrences.length);
         _playlistQueueEntryIds.removeRange(
           keepCount,
           _playlistQueueEntryIds.length,
@@ -9114,6 +9180,7 @@ class PlayerService {
     }
 
     _playlist.removeAt(playlistIndex);
+    _playlistOccurrences.removeAt(playlistIndex);
     _playlistQueueEntryIds.removeAt(playlistIndex);
     _removeFromAudioSequence(playlistIndex);
 
@@ -9144,6 +9211,7 @@ class PlayerService {
     for (var i = _playlistQueueEntryIds.length - 1; i >= 0; i--) {
       if (_playlistQueueEntryIds[i] != null) {
         _playlist.removeAt(i);
+        _playlistOccurrences.removeAt(i);
         _playlistQueueEntryIds.removeAt(i);
       }
     }
@@ -9206,8 +9274,10 @@ class PlayerService {
     // normalized by QueueList. Subtracting a second time broke downward
     // moves (including 0 -> 1, which became a no-op).
     final song = _playlist.removeAt(playlistOldIndex);
+    final occurrence = _playlistOccurrences.removeAt(playlistOldIndex);
     final entryId = _playlistQueueEntryIds.removeAt(playlistOldIndex);
     _playlist.insert(playlistNewIndex, song);
+    _playlistOccurrences.insert(playlistNewIndex, occurrence);
     _playlistQueueEntryIds.insert(playlistNewIndex, entryId);
 
     // Up Next includes manual queue entries. A drag here must update that
@@ -10069,3 +10139,4 @@ class _ShuffleBoolNotifier extends ValueNotifier<bool> {
     super.dispose();
   }
 }
+

@@ -476,6 +476,10 @@ class MainActivity: FlutterActivity() {
                         result.error("INVALID_ARGUMENT", "URI is required", null)
                     }
                 }
+                "setCastStagingPaths" -> {
+                    CastStagingProtection.update(call.argument<List<String>>("paths") ?: emptyList(), java.io.File(cacheDir, "playback_staging"))
+                    result.success(null)
+                }
                 "cacheUriForPlayback" -> {
                     val uri = call.argument<String>("uri")
                     val extensionHint = call.argument<String>("extensionHint")
@@ -3119,6 +3123,7 @@ class MainActivity: FlutterActivity() {
             for (file in byOldest) {
                 if (total <= maxBytes) break
                 if (protect != null && file.absolutePath == protect.absolutePath) continue
+                if (CastStagingProtection.contains(file)) continue
                 val len = file.length()
                 if (file.delete()) {
                     total -= len
@@ -5959,3 +5964,4 @@ class MainActivity: FlutterActivity() {
     private external fun nativeMarkRustDirectUsbFallback(reason: String?): Boolean
     private external fun nativeSetRustDeveloperMode(enabled: Boolean)
 }
+

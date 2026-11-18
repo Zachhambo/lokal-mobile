@@ -9,6 +9,9 @@ class CastDevice {
   final String? controlUrl;
   final String? renderingControlUrl;
   final bool supportsVolume;
+  final bool isSonos;
+  final String? topologyControlUrl;
+  final String? groupRenderingControlUrl;
 
   const CastDevice({
     required this.id,
@@ -19,6 +22,9 @@ class CastDevice {
     this.controlUrl,
     this.renderingControlUrl,
     this.supportsVolume = true,
+    this.isSonos = false,
+    this.topologyControlUrl,
+    this.groupRenderingControlUrl,
   });
 
   @override
