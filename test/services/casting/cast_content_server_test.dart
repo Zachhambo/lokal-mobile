@@ -45,6 +45,28 @@ void main() {
       response.fold<List<int>>([], (all, chunk) => all..addAll(chunk));
 
   test(
+    'receiver filename rewrites preserve only the same owned media token',
+    () async {
+      await withServer((client, uri) async {
+        final server = CastContentServer.instance;
+        final alias = uri.replace(
+          pathSegments: [uri.pathSegments.first, 'Renamed track.m4a'],
+        );
+        final other = uri.replace(pathSegments: ['other-token', 'track.m4a']);
+        expect(server.sameSource(uri.toString(), alias.toString()), isTrue);
+        expect(server.sameSource(uri.toString(), other.toString()), isFalse);
+        expect(
+          server.sameSource(
+            uri.toString(),
+            uri.replace(host: 'another-host').toString(),
+          ),
+          isFalse,
+        );
+      });
+    },
+  );
+
+  test(
     'Cast web receiver can preflight and read a token-scoped LAN file',
     () async {
       await withServer((client, uri) async {

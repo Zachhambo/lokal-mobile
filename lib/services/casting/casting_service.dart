@@ -1375,16 +1375,22 @@ class CastingService {
           return;
         }
         _dlnaFailures = 0;
+        final sameSource = CastContentServer.instance.sameSource;
+        bool matches(String url) =>
+            sameSource(url, info.uri) ||
+            (device!.isSonos && info.resourceUri != null &&
+                sameSource(url, info.resourceUri!));
         final entry = device!.isSonos && info.track > 0
             ? (info.track <= _dlnaItems.length
                   ? _dlnaItems[info.track - 1]
                   : null)
-            : _dlnaItems.where((e) => e.url == info.uri).firstOrNull;
-        if (entry != null && entry.url == info.uri) {
+            : _dlnaItems.where((e) => sameSource(e.url, info.uri)).firstOrNull;
+        final matched = entry != null && matches(entry.url);
+        if (matched) {
           final occurrence = entry.occurrence;
           if (occurrence != null &&
               (!identical(occurrence, ps.castPlaylistOccurrence(ps.currentIndex)) ||
-                  info.uri != _dlnaReceiverUri)) {
+                  entry.url != _dlnaReceiverUri)) {
             final followed = await ps.followCastPlaylistTrack(
               occurrence,
               entry.song,
@@ -1411,7 +1417,7 @@ class CastingService {
           }
           return;
         }
-        _dlnaReceiverUri = info.uri;
+        _dlnaReceiverUri = matched ? entry.url : info.uri;
         ps.positionNotifier.value = info.position;
         if (info.duration.inMilliseconds > 0) {
           ps.durationNotifier.value = info.duration;
@@ -1478,6 +1484,7 @@ class CastingService {
   }
 
   Future<_DlnaQueueItem> _prepareDlna(
+    CastDevice device,
     Song song,
     Object? occurrence,
     bool Function() current,
@@ -1498,11 +1505,16 @@ class CastingService {
     }
     String? art;
     try {
-      art = await castArtwork(
-        song,
-        stillCurrent: current,
-        preferJpeg: true,
-      ).timeout(const Duration(seconds: 5));
+      if (device.isSonos && CastContentServer.instance.ownsFileUrl(url)) {
+        art = await _dlna.speakerArtwork(device.controlUrl!, url);
+      }
+      if (current()) {
+        art ??= await castArtwork(
+          song,
+          stillCurrent: current,
+          preferJpeg: true,
+        ).timeout(const Duration(seconds: 5));
+      }
     } catch (_) {}
     if (!current()) throw const CastHandoffCancelled();
     return (
@@ -1526,12 +1538,18 @@ class CastingService {
       );
 
   // Allocate the DIDL ID at insertion time, even if a prepared item is reused.
-  Future<void> _enqueueSonos(String control, _DlnaQueueItem item) =>
-      _dlna.enqueue(
-        control,
-        item.url,
-        _dlnaMetadata(item, sonosQueueId: ++_sonosQueueId),
-      );
+  Future<void> _enqueueSonos(String control, _DlnaQueueItem item) async {
+    final expected = _dlnaItems.length + 1;
+    final index = await _dlna.enqueue(
+      control,
+      item.url,
+      _dlnaMetadata(item, sonosQueueId: ++_sonosQueueId),
+      position: expected == 1 ? 1 : 0,
+    );
+    if (index != null && index != expected) {
+      throw StateError('Sonos added the track at an unexpected queue position.');
+    }
+  }
 
   Future<void> _loadDlnaSong(
     Song song, {
@@ -1566,7 +1584,7 @@ class CastingService {
               );
         final item = held >= 0
             ? _dlnaItems[held]
-            : await _prepareDlna(song, occurrence, current);
+            : await _prepareDlna(device, song, occurrence, current);
         if (!current()) return;
         onReceiverTouched?.call();
         if (device.isSonos && held >= 0) {
@@ -1707,7 +1725,7 @@ class CastingService {
             item.song.id == entry.song.id &&
             !shouldReplaceQueuedAudioSource(item.song, entry.song)).firstOrNull;
         final item = held ??
-            await _prepareDlna(entry.song, entry.occurrence, stillWanted);
+            await _prepareDlna(device!, entry.song, entry.occurrence, stillWanted);
         if (!stillWanted()) return;
         ready.add(item);
       }
@@ -1725,9 +1743,12 @@ class CastingService {
           final position = await _dlna.getPosition(control);
           if (position == null || !stillWanted()) return;
           var here = position.track - 1;
+          final sameSource = CastContentServer.instance.sameSource;
           if (here < 0 ||
               here >= _dlnaItems.length ||
-              _dlnaItems[here].url != position.uri ||
+              (!sameSource(_dlnaItems[here].url, position.uri) &&
+                  (position.resourceUri == null ||
+                      !sameSource(_dlnaItems[here].url, position.resourceUri!))) ||
               !identical(_dlnaItems[here].occurrence, currentOccurrence)) {
             return;
           }
