@@ -75,6 +75,9 @@ void main() {
 
   test('moving-cover resolver finds offline video without any provider requests',
       () async {
+    SharedPreferences.setMockInitialValues({
+      'lokal.motion.sources': ['spotify'],
+    });
     final cache = MotionArtOfflineCache.create(
       directory: directory,
       client: MockClient((_) async => http.Response('clip', 200)),
@@ -113,6 +116,9 @@ void main() {
 
   test('album and track artist identities find one cached Spotify Canvas',
       () async {
+    SharedPreferences.setMockInitialValues({
+      'lokal.motion.sources': ['spotify'],
+    });
     var downloads = 0;
     final cache = MotionArtOfflineCache.create(
       directory: directory,
@@ -325,6 +331,138 @@ void main() {
     expect(await cache.find('hls'), isNotNull);
   });
 
+  test(
+    'normalizes HLS byte ranges into self-contained offline segments',
+    () async {
+      const artwork = AnimatedArtwork(
+        name: 'Album',
+        artist: 'Artist',
+        albumId: 'apple:album',
+        animatedUrl: 'https://cdn.example.com/playlist.m3u8',
+      );
+      final ranges = <String>[];
+      final cache = MotionArtOfflineCache.create(
+        directory: directory,
+        client: MockClient((request) async {
+          if (request.url.path == '/playlist.m3u8') {
+            return http.Response(
+              '#EXTM3U\n'
+              '#EXT-X-VERSION:7\n'
+              '#EXT-X-TARGETDURATION:3\n'
+              '#EXT-X-MAP:URI="cover.mp4",BYTERANGE="4@2"\n'
+              '#EXTINF:2.5,\n'
+              '#EXT-X-BYTERANGE:4@6\n'
+              'cover.mp4\n'
+              '#EXTINF:2.5,\n'
+              '#EXT-X-BYTERANGE:4\n'
+              'cover.mp4\n'
+              '#EXT-X-ENDLIST\n',
+              200,
+            );
+          }
+          final range = request.headers['range']!;
+          ranges.add(range);
+          if (range == 'bytes=10-13') {
+            // An origin that ignores Range still works for a bounded response.
+            return http.Response('xxinitone!two!', 200);
+          }
+          return http.Response(
+            range == 'bytes=2-5' ? 'init' : 'one!',
+            206,
+            headers: {'content-range': 'bytes ${range.substring(6)}/14'},
+          );
+        }),
+      );
+
+      await cache.remember('ranges', artwork, preferVertical: false);
+      final manifest = (await cache.localFile(artwork.playbackUrl!))!;
+      final playlist = await manifest.readAsString();
+      expect(ranges, ['bytes=2-5', 'bytes=6-9', 'bytes=10-13']);
+      expect(playlist, contains('URI="asset_0.mp4"'));
+      expect(playlist, isNot(contains('BYTERANGE')));
+      for (final (index, content) in ['init', 'one!', 'two!'].indexed) {
+        expect(
+          await File('${manifest.parent.path}/asset_$index.mp4').readAsString(),
+          content,
+        );
+      }
+    },
+  );
+
+  test('prepares motion art while Canvas is selected and switches after restart', () async {
+    SharedPreferences.setMockInitialValues({
+      'lokal.motion.sources': ['tidal', 'spotify'],
+      'lokal.motion.spotify_first': true,
+    });
+    final cache = MotionArtOfflineCache.create(
+      directory: directory,
+      client: MockClient((_) async => http.Response('saved video', 200)),
+    );
+    final online = MovingCoverService(
+      offlineCache: cache,
+      offline: () async => false,
+      client: MockClient((request) async {
+        expect(request.url.host, 'api.tidal.com');
+        return http.Response(
+          '{"tracks":{"items":[{"title":"Track","artists":[{"name":"Artist"}],'
+          '"album":{"title":"Album","videoCover":"12345678-1234-1234-1234-123456789abc"}}]}}',
+          200,
+        );
+      }),
+    );
+    await online.cachePlayedClip(
+      title: 'Track',
+      artist: 'Artist',
+      album: 'Album',
+      artwork: mp4,
+      preferVertical: true,
+    );
+
+    var networkCalls = 0;
+    final noNetwork = MockClient((_) async {
+      networkCalls++;
+      throw StateError('offline');
+    });
+    final restartedCache = MotionArtOfflineCache.create(
+      directory: directory,
+      client: noNetwork,
+    );
+    final restarted = MovingCoverService(
+      offlineCache: restartedCache,
+      offline: () async => true,
+      client: noNetwork,
+    );
+
+    Future<String?> selected({
+      required bool spotifyFirst,
+      Set<String> sources = const {'tidal', 'spotify'},
+    }) async {
+      final clip = await restarted.lookup(
+        title: 'Track',
+        artist: 'Artist',
+        album: 'Album',
+        settings: MovingCoverSettings(
+          sources: sources,
+          spotifyFirst: spotifyFirst,
+        ),
+      );
+      final artwork = clip.artwork;
+      if (artwork == null) return null;
+      final local = await restartedCache.playable(
+        artwork,
+        preferVertical: true,
+      );
+      expect(Uri.parse(local!.url).scheme, 'file');
+      return artwork.albumId.split(':').first;
+    }
+
+    expect(await selected(spotifyFirst: true), 'spotify');
+    expect(await selected(spotifyFirst: false), 'tidal');
+    expect(await selected(spotifyFirst: true, sources: {'tidal'}), 'tidal');
+    expect(await selected(spotifyFirst: true, sources: {}), isNull);
+    expect(networkCalls, 0);
+  });
+
   test('missing HLS segments invalidate an otherwise complete marker', () async {
     const artwork = AnimatedArtwork(
       name: 'Album',
@@ -396,6 +534,9 @@ void main() {
   });
   test('airplane mode bypasses memoized streaming lookup after clip eviction',
       () async {
+    SharedPreferences.setMockInitialValues({
+      'lokal.motion.sources': ['spotify'],
+    });
     var offline = false;
     var providerRequests = 0;
     final cache = MotionArtOfflineCache.create(

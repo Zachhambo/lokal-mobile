@@ -677,8 +677,7 @@ class _MotionArtViewState extends State<MotionArtView>
     // initialization failed or the player route was replaced early.
     // Lookups used by the footer do not warm media: only the active video
     // surface may cause a bounded background download.
-    if (playable?.cachedSource == null &&
-        widget.serviceOverride == null &&
+    if (widget.serviceOverride == null &&
         artwork != null &&
         !_ecoActive &&
         !_offlineActive) {
@@ -690,6 +689,8 @@ class _MotionArtViewState extends State<MotionArtView>
           artist: widget.artist,
           album: widget.albumMode ? widget.album ?? widget.title : widget.album,
           artwork: artwork,
+          duration: widget.duration,
+          cacheSelected: playable?.cachedSource == null,
           preferVertical: widget.preferVertical,
           alternateArtist: widget.offlineArtistAlias,
         ),
