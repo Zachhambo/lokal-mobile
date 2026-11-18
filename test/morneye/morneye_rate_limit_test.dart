@@ -15,6 +15,7 @@ import 'morneye_fakes.dart';
 class _Gateway extends MorneyeNetwork {
   _Gateway() : super(const MorneyePermissions(network: ['gateway.example']));
   int calls = 0;
+  Map<String, Object?> Function(Uri, Map<String, String>)? onRequest;
   Map<String, Object?> response = {
     'ok': false,
     'status': 429,
@@ -31,7 +32,7 @@ class _Gateway extends MorneyeNetwork {
     bool asFetch = false,
   }) async {
     calls++;
-    return response;
+    return onRequest?.call(Uri.parse(raw), headers) ?? response;
   }
 }
 
@@ -188,8 +189,63 @@ void main() {
       expect(reply['status'], 403);
       expect(reply['retryMode'], 'none');
       expect(session.rateLimitError, isNull);
+      expect(gateway.calls, 1);
     },
   );
+
+  test(
+    'ticket requests use the gateway nonce and JSON header format',
+    () async {
+      gateway.onRequest = (url, headers) {
+        expect(url.path, '/tickets');
+        expect(headers['x-sig-nonce'], matches(r'^[a-f0-9]{24}$'));
+        expect(headers['accept'], 'application/json');
+        expect(headers['content-type'], 'application/json');
+        expect(headers['x-sig-session'], 'session');
+        expect(headers['x-zarz-ticket'], 'example');
+        return {'ok': true, 'status': 200, 'body': '{"ticket_id":"fixture"}'};
+      };
+
+      final reply = await session.signedFetch('POST', '/tickets', '{}', {
+        'X-Sig-Session': 'overridden',
+        'X-Zarz-Ticket': 'example',
+      });
+      expect(reply['ok'], isTrue);
+      expect(gateway.calls, 1);
+    },
+  );
+
+  for (final rotateSession in [false, true]) {
+    test(
+      'a request-auth 403 retries only after session rotation ($rotateSession)',
+      () async {
+        gateway.onRequest = (url, headers) {
+          expect(url.path, '/tickets');
+          if (headers['x-sig-session'] == 'new-session') {
+            return {'ok': true, 'status': 200, 'body': '{}'};
+          }
+          if (rotateSession) {
+            storage.write(session.namespace, 'session', {
+              ...session.record(),
+              'session_id': 'new-session',
+              'session_secret': 'new-secret',
+            });
+          }
+          return {
+            'ok': false,
+            'status': 403,
+            'body': '{"code":"REQUEST_AUTH_INVALID","origin":"gateway"}',
+          };
+        };
+
+        final reply = await session.signedFetch('POST', '/tickets', '{}');
+        expect(reply['status'], rotateSession ? 200 : 403);
+        expect(gateway.calls, rotateSession ? 2 : 1);
+        expect(session.rateLimitError, isNull);
+        expect(session.status()['authenticated'], isTrue);
+      },
+    );
+  }
 
   for (final caught in [false, true]) {
     test(
