@@ -106,7 +106,10 @@ void main() {
     expect(collected.last, 2);
     final finalFile = File('${directory.path}/cached.flac');
     await file.rename(finalFile.path);
+    final complete = session.completeFile;
     session.promote(finalFile.path);
+    expect(await complete, finalFile.path);
+    expect(await session.completeFile, finalFile.path);
     expect(session.isTransferring, isFalse);
     final seek = await session.request(90000, 100000);
     expect(await seek.stream.expand((bytes) => bytes).length, 10000);

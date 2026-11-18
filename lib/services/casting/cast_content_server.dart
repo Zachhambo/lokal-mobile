@@ -6,6 +6,9 @@ import 'package:flutter/services.dart';
 
 import '../sources/local_network_access.dart';
 import 'cast_lan_address.dart';
+import 'cast_source.dart';
+
+typedef _CastRelay = ({Uri uri, Map<String, String> headers, bool online});
 
 // ponytail: one-file embedded HTTP server so the renderer can pull bytes from
 // the phone. Covers local files and SMB/cached sources that have no LAN URL.
@@ -19,7 +22,7 @@ class CastContentServer {
   int _epoch = 0;
   final Map<String, String> _paths = {};
   final Map<String, Uint8List> _artwork = {};
-  final Map<String, ({Uri uri, Map<String, String> headers})> _relays = {};
+  final Map<String, _CastRelay> _relays = {};
   final Set<HttpClient> _clients = {};
   final Map<String, ContentType> _types = {};
   final _rand = Random.secure();
@@ -111,7 +114,24 @@ class CastContentServer {
       throw ArgumentError('Cast relay requires an HTTP source.');
     return _publish(
       filename: filename,
-      remote: (uri: uri, headers: Map.unmodifiable(headers)),
+      remote: (uri: uri, headers: Map.unmodifiable(headers), online: false),
+      stillCurrent: stillCurrent,
+    );
+  }
+
+  Future<String> relayOnline(
+    Uri upstream, {
+    required String filename,
+    bool Function()? stillCurrent,
+  }) {
+    if (upstream.scheme != 'https' ||
+        receiverDirectUrl(upstream.toString()) == null) {
+      throw ArgumentError('Online Cast media requires a reachable HTTPS source.');
+    }
+    return _publish(
+      filename: filename,
+      remote: (uri: upstream, headers: const {}, online: true),
+      contentType: _contentTypeFor(filename),
       stillCurrent: stillCurrent,
     );
   }
@@ -120,7 +140,7 @@ class CastContentServer {
     required String filename,
     String? filePath,
     Uint8List? artwork,
-    ({Uri uri, Map<String, String> headers})? remote,
+    _CastRelay? remote,
     ContentType? contentType,
     bool Function()? stillCurrent,
   }) async {
@@ -259,7 +279,7 @@ class CastContentServer {
       return;
     }
     if (remote != null) {
-      await _relay(req, remote);
+      await _relay(req, remote, _types[token]);
       return;
     }
     final file = path == null ? null : File(path);
@@ -359,7 +379,8 @@ class CastContentServer {
 
   Future<void> _relay(
     HttpRequest request,
-    ({Uri uri, Map<String, String> headers}) remote,
+    _CastRelay remote,
+    ContentType? mediaType,
   ) async {
     final client = HttpClient()
       ..autoUncompress = false
@@ -375,19 +396,7 @@ class CastContentServer {
       },
     );
     try {
-      final upstreamRequest = await client
-          .openUrl(request.method, remote.uri)
-          .timeout(const Duration(seconds: 15));
-      // Credentials must never follow a desktop redirect to another origin.
-      upstreamRequest.followRedirects = false;
-      remote.headers.forEach(upstreamRequest.headers.set);
-      upstreamRequest.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
-      final range = request.headers.value(HttpHeaders.rangeHeader);
-      if (request.method == 'GET' &&
-          range != null &&
-          RegExp(r'^bytes=\d*-\d*$').hasMatch(range))
-        upstreamRequest.headers.set(HttpHeaders.rangeHeader, range);
-      final upstream = await upstreamRequest.close().timeout(
+      final upstream = await _openRelay(client, request, remote).timeout(
         const Duration(seconds: 15),
       );
       final encoding = upstream.headers.value(
@@ -422,6 +431,11 @@ class CastContentServer {
         final value = upstream.headers.value(header);
         if (value != null) request.response.headers.set(header, value);
       }
+      final upstreamType = request.response.headers.contentType?.mimeType;
+      if (mediaType != null &&
+          (upstreamType == null || upstreamType == 'application/octet-stream')) {
+        request.response.headers.contentType = mediaType;
+      }
       if (request.method != 'HEAD') {
         request.response.bufferOutput = false;
         await request.response.flush();
@@ -441,6 +455,41 @@ class CastContentServer {
       await request.response.close();
     }
   }
+
+  Future<HttpClientResponse> _openRelay(
+    HttpClient client,
+    HttpRequest request,
+    _CastRelay remote,
+  ) async {
+    var uri = remote.uri;
+    final range = request.headers.value(HttpHeaders.rangeHeader);
+    for (var hop = 0; ; hop++) {
+      // Provider-signed playback URLs can authorize GET only. For a receiver
+      // HEAD, read GET headers and close the upstream without copying its body.
+      final upstream = await client.openUrl(remote.online ? 'GET' : request.method, uri);
+      upstream.followRedirects = false;
+      remote.headers.forEach(upstream.headers.set);
+      upstream.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
+      if (request.method == 'GET' && range != null &&
+          RegExp(r'^bytes=\d*-\d*$').hasMatch(range)) {
+        upstream.headers.set(HttpHeaders.rangeHeader, range);
+      }
+      final response = await upstream.close();
+      // The authenticated desktop relay never follows redirects. Progressive
+      // public media can move between HTTPS hosts and carries no account headers.
+      if (!remote.online || !response.isRedirect || hop == 4) return response;
+      final location = response.headers.value(HttpHeaders.locationHeader);
+      if (location == null) return response;
+      final next = uri.resolve(location);
+      if (next.scheme != 'https' || receiverDirectUrl(next.toString()) == null) {
+        return response;
+      }
+      // Online providers return small redirect bodies. Cancel the old
+      // response so a slow body cannot delay opening the actual audio.
+      unawaited(response.listen((_) {}).cancel());
+      uri = next;
+    }
+  }
 }
 
 ContentType _contentTypeFor(String path) {
@@ -456,6 +505,7 @@ ContentType _contentTypeFor(String path) {
     'flac' => ContentType.parse('audio/flac'),
     'wav' => ContentType.parse('audio/wav'),
     'ogg' || 'oga' || 'opus' => ContentType.parse('audio/ogg'),
+    'webm' => ContentType.parse('audio/webm'),
     'm4a' || 'mp4' => ContentType.parse('audio/mp4'),
     'aac' => ContentType.parse('audio/aac'),
     'aiff' || 'aif' => ContentType.parse('audio/aiff'),

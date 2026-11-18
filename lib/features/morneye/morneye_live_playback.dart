@@ -29,6 +29,7 @@ class MorneyeLiveSession {
   static const _pollInterval = Duration(milliseconds: 100);
 
   final Completer<void> _ready = Completer<void>();
+  Completer<String>? _completeFile;
   String? _part;
   String? _downloaded;
   String? _cached;
@@ -40,6 +41,12 @@ class MorneyeLiveSession {
   DateTime _lastMovement = DateTime.now();
 
   Future<void> get playable => _ready.future;
+  /// Receivers can use the validated cache with a stable HTTP length.
+  Future<String> get completeFile {
+    if (_error case final error?) return Future.error(error);
+    if (_cached case final path?) return Future.value(path);
+    return (_completeFile ??= Completer<String>()).future;
+  }
   bool get isPlayable => _ready.isCompleted && !_invalid;
   bool get isTransferring => isPlayable && !_transferred;
   int get total => _total;
@@ -199,11 +206,15 @@ class MorneyeLiveSession {
     _transferred = true;
     _written = _total;
     _lastMovement = DateTime.now();
+    _completeFile?.complete(path);
+    _completeFile = null;
   }
 
   void fail(Object error) {
     _invalid = true;
     _error = error;
+    _completeFile?.completeError(error);
+    _completeFile = null;
   }
 
   Future<RandomAccessFile> _open() async {
