@@ -218,6 +218,8 @@ class DlnaBackend {
     String? album,
     String? artworkUrl,
     String contentType = 'audio/mpeg',
+    int? sonosQueueId,
+    Duration duration = Duration.zero,
   }) {
     String e(String? v) => (v ?? '')
         .replaceAll('&', '&amp;')
@@ -225,11 +227,18 @@ class DlnaBackend {
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&apos;');
+    final sonos = sonosQueueId != null;
+    final durationAttribute = sonos && duration.inSeconds > 0
+        ? ' duration="${_fmtTime(duration)}"'
+        : '';
     return '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">'
-        '<item id="1" parentID="0" restricted="1"><dc:title>${e(title)}</dc:title>'
+        '<item id="${sonosQueueId ?? 1}" parentID="0" restricted="1"><dc:title>${e(title)}</dc:title>'
+        '${sonos ? '<dc:creator>${e(artist)}</dc:creator>' : ''}'
         '<upnp:class>object.item.audioItem.musicTrack</upnp:class><upnp:artist>${e(artist)}</upnp:artist><upnp:album>${e(album)}</upnp:album>'
         '${artworkUrl == null ? '' : '<upnp:albumArtURI>${e(artworkUrl)}</upnp:albumArtURI>'}'
-        '<res protocolInfo="http-get:*:${e(contentType)}:*">${e(url)}</res></item></DIDL-Lite>';
+        '<res protocolInfo="http-get:*:${e(contentType)}:*"$durationAttribute>${e(url)}</res>'
+        '${sonos ? '<desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">RINCON_AssociatedZPUDN</desc>' : ''}'
+        '</item></DIDL-Lite>';
   }
 
   Future<CastDevice> coordinator(CastDevice device) async {
@@ -540,7 +549,7 @@ class DlnaBackend {
       .replaceAll('&', '&amp;')
       .replaceAll('<', '&lt;')
       .replaceAll('>', '&gt;');
-  String _fmtTime(Duration d) {
+  static String _fmtTime(Duration d) {
     final h = d.inHours.toString().padLeft(2, '0');
     final m = (d.inMinutes % 60).toString().padLeft(2, '0');
     final s = (d.inSeconds % 60).toString().padLeft(2, '0');

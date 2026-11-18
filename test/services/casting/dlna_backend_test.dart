@@ -209,21 +209,35 @@ void main() {
           return http.Response(envelope(''), 200);
         }),
       );
-      final metadata = DlnaBackend.metadata('http://phone/song', title: 'Song');
-      await backend.enqueue(
-        'http://speaker/control',
-        'http://phone/song',
-        metadata,
-      );
-      expect(
-        text(
-          XmlDocument.parse(
-            text(XmlDocument.parse(requests.last.body), 'EnqueuedURIMetaData'),
+      const url = 'http://phone/song';
+      const artwork = 'http://phone/cover.jpg?a=1&b=2';
+      for (final id in [1, 2]) {
+        await backend.enqueue(
+          'http://speaker/control',
+          url,
+          DlnaBackend.metadata(
+            url,
+            title: 'Song',
+            artist: 'A & B',
+            artworkUrl: artwork,
+            sonosQueueId: id,
+            duration: const Duration(minutes: 3, seconds: 8),
           ),
-          'title',
-        ),
-        'Song',
-      );
+        );
+        final didl = XmlDocument.parse(
+          text(XmlDocument.parse(requests.last.body), 'EnqueuedURIMetaData'),
+        );
+        expect(didl.findAllElements('item').single.getAttribute('id'), '$id');
+        expect(text(didl, 'title'), 'Song');
+        expect(text(didl, 'creator'), 'A & B');
+        expect(text(didl, 'albumArtURI'), artwork);
+        expect(text(didl, 'desc'), 'RINCON_AssociatedZPUDN');
+        expect(didl.findAllElements('desc').single.getAttribute('id'), 'cdudn');
+        expect(
+          didl.findAllElements('res').single.getAttribute('duration'),
+          '00:03:08',
+        );
+      }
       await backend.removeQueueTail('http://speaker/control', 3, 2);
       expect(text(XmlDocument.parse(requests.last.body), 'StartingIndex'), '3');
       expect(
