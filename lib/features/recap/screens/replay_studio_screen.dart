@@ -1,3 +1,5 @@
+import 'package:flick/widgets/lokal/lokal_toast.dart';
+
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -243,14 +245,11 @@ class _ReplayStudioScreenState extends ConsumerState<ReplayStudioScreen> {
       }
       if (!mounted) return;
       setState(() => _saved = format == null);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            format == null
-                ? l10n.savedToYourGallery(_type.label)
-                : l10n.recapSavedAs(format),
-          ),
-        ),
+      LokalToast.show(
+        context,
+        format == null
+            ? l10n.savedToYourGallery(_type.label)
+            : l10n.recapSavedAs(format),
       );
     } catch (error) {
       if (mounted) {
@@ -809,11 +808,7 @@ class _ReplayStudioScreenState extends ConsumerState<ReplayStudioScreen> {
       if (!opened) throw StateError('Could not open Ko-fi');
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.couldNotOpenKoFiPlease),
-          ),
-        );
+        LokalToast.show(context, l10n.couldNotOpenKoFiPlease);
       }
     }
   }

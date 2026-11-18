@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flick/features/discovery/lastfm_discovery.dart';
 import 'package:flick/features/discovery/spotify_discovery.dart';
 import 'package:flick/features/konnekted/konnekted_data.dart';
@@ -113,9 +114,7 @@ class _SpotifyPlaylistsScreenState
         if (_playlists.isEmpty) {
           setState(() => _error = message);
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(message)),
-          );
+          LokalToast.show(context, message);
         }
       }
     } finally {
@@ -144,9 +143,10 @@ class _SpotifyPlaylistsScreenState
         if (mounted) setState(() => _autoUpdate = saved);
       } catch (_) {}
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Could not save Spotify playlist auto-update setting.'),
-        ));
+        LokalToast.show(
+          context,
+          'Could not save Spotify playlist auto-update setting.',
+        );
       }
     } finally {
       if (mounted) setState(() => _savingAutoUpdate = false);
@@ -363,9 +363,7 @@ class _SpotifyPlaylistDetailState
         if (_tracks.isEmpty) {
           setState(() => _error = message);
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(message)),
-          );
+          LokalToast.show(context, message);
         }
       }
     } finally {

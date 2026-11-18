@@ -1,3 +1,5 @@
+import 'package:flick/widgets/lokal/lokal_toast.dart';
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -67,12 +69,12 @@ class _Uac2ConnectionManagerState extends ConsumerState<Uac2ConnectionManager> {
     final success = await service.attemptReconnect();
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            success ? l10n.reconnectionSuccessful : l10n.reconnectionFailed,
-          ),
-          backgroundColor: success ? Colors.green : Colors.red,
+      LokalToast.show(
+        context,
+        success ? l10n.reconnectionSuccessful : l10n.reconnectionFailed,
+        leading: Icon(
+          success ? Icons.check_circle_outline : Icons.error_outline,
+          size: 18,
         ),
       );
     }
@@ -88,15 +90,11 @@ class _Uac2ConnectionManagerState extends ConsumerState<Uac2ConnectionManager> {
     final formatSuffix = format != null
         ? l10n.atKhzBit((format.sampleRate ~/ 1000), format.bitDepth)
         : '';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          '$deviceName ${isStreaming ? "streaming" : "connected"}$formatSuffix',
-        ),
-        backgroundColor: Colors.green,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 3),
-      ),
+    LokalToast.show(
+      context,
+      '$deviceName ${isStreaming ? "streaming" : "connected"}$formatSuffix',
+      duration: const Duration(seconds: 3),
+      leading: const Icon(Icons.check_circle_outline, size: 18),
     );
   }
 

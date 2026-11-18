@@ -282,19 +282,14 @@ class _Uac2PreferencesSectionsState
                     await PlayerService().setDapBitPerfectEnabled(value);
                     ref.invalidate(uac2DapBitPerfectEnabledProvider);
                     if (!context.mounted) return;
-                    final messenger = ScaffoldMessenger.of(context);
-                    messenger.removeCurrentSnackBar();
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          value
-                              ? l10n.bitPerfectDapInternalEnabledAll
-                              : l10n.bitPerfectDapInternalDisabledSoftware,
-                        ),
-                        behavior: SnackBarBehavior.floating,
-                      ),
+                    final feedback = value
+                        ? l10n.bitPerfectDapInternalEnabledAll
+                        : l10n.bitPerfectDapInternalDisabledSoftware;
+                    LokalToast.show(
+                      context,
+                      '$feedback ${l10n.restartTheAppToApplyPlayback}',
+                      duration: const Duration(seconds: 5),
                     );
-                    _showRestartRequiredToast(context);
                   },
                 ),
               ),
@@ -850,38 +845,20 @@ class _Uac2PreferencesSectionsState
       if (mounted) setState(() => _forceUsbRestartInProgress = false);
     }
     if (!context.mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(recovered
-            ? 'USB engine verified. Track restarted from the beginning.'
-            : 'USB audio restart failed. Check DAC connection and logs.'),
-        behavior: SnackBarBehavior.floating,
-      ),
+    LokalToast.show(
+      context,
+      recovered
+          ? 'USB engine verified. Track restarted from the beginning.'
+          : 'USB audio restart failed. Check DAC connection and logs.',
     );
   }
 
   void _showRestartRequiredToast(BuildContext context) {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.removeCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(l10n.restartTheAppToApplyPlayback),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    LokalToast.show(context, l10n.restartTheAppToApplyPlayback);
   }
 
   void _showDeviceRestartRequiredToast(BuildContext context) {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.removeCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(l10n.restartYourDeviceToApplyOutput),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    LokalToast.show(context, l10n.restartYourDeviceToApplyOutput);
   }
 
   String _getFormatPreferenceLabel(Uac2FormatPreference pref) {

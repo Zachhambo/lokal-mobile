@@ -125,10 +125,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(remote.targetChanges, isEmpty);
     expect(find.text('Desktop unavailable'), findsOneWidget);
+    expect(find.byType(SnackBar), findsNothing);
     expect(tester.widget<Switch>(find.byKey(
       const ValueKey('you-control-desktop-switch'),
     )).value, isFalse);
     expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.text('Desktop unavailable'), findsNothing);
   });
 
   testWidgets('paired Devices overflow preserves both playback handoffs',

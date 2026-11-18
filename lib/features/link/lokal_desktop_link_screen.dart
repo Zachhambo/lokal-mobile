@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -109,18 +110,14 @@ class _LokalDesktopLinkScreenState
   Future<void> _merge() => _run(() async {
     await ref.read(lokalRemoteControllerProvider.notifier).approveMerge();
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(lokalText('Libraries are up to date.'))),
-      );
+      LokalToast.show(context, lokalText('Libraries are up to date.'));
     }
   });
 
   Future<void> _syncNow() => _run(() async {
     await ref.read(lokalRemoteControllerProvider.notifier).syncNow();
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(lokalText('Libraries are up to date.'))),
-      );
+      LokalToast.show(context, lokalText('Libraries are up to date.'));
     }
   });
 
@@ -171,13 +168,10 @@ class _LokalDesktopLinkScreenState
           );
         } catch (_) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  lokalText(
-                    'Some files could not be queued. Review File transfers before trying again. Submitted transfers are kept.',
-                  ),
-                ),
+            LokalToast.show(
+              context,
+              lokalText(
+                'Some files could not be queued. Review File transfers before trying again. Submitted transfers are kept.',
               ),
             );
           }

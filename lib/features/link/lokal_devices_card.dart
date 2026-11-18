@@ -1,3 +1,4 @@
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -40,9 +41,7 @@ class _LokalDevicesCardState extends ConsumerState<LokalDevicesCard> {
         StateError e => e.message.toString(),
         _ => l10n.linkActionFailed,
       };
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      LokalToast.show(context, message);
     } finally {
       if (mounted) setState(() => _switching = false);
     }
@@ -67,9 +66,7 @@ class _LokalDevicesCardState extends ConsumerState<LokalDevicesCard> {
         StateError e => e.message.toString(),
         _ => l10n.linkActionFailed,
       };
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      LokalToast.show(context, message);
     } finally {
       if (mounted) setState(() => _switching = false);
     }

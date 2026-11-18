@@ -1,3 +1,4 @@
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flick/services/motion_art/moving_cover_settings.dart';
 import 'package:flick/services/link/lokal_desktop_source.dart';
 import 'package:flick/l10n/l10n.dart';
@@ -176,9 +177,7 @@ class SongActionsBottomSheet extends ConsumerWidget {
 
   void _say(String message) {
     if (!rootContext.mounted) return;
-    ScaffoldMessenger.maybeOf(rootContext)?.showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
-    );
+    LokalToast.show(rootContext, message, duration: const Duration(seconds: 2));
   }
 
   @override

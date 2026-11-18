@@ -69,4 +69,48 @@ void main() {
     expect(tapped, 1);
     expect(find.text('Playback out of sync'), findsNothing);
   });
+
+  testWidgets('an actionable pill survives a route pushed after it was shown', (
+    tester,
+  ) async {
+    final navigator = GlobalKey<NavigatorState>();
+    late BuildContext screen;
+    var retries = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigator,
+        builder: (_, child) => Overlay.wrap(child: child!),
+        home: Scaffold(
+          body: Builder(
+            builder: (context) {
+              screen = context;
+              return const SizedBox.expand();
+            },
+          ),
+        ),
+      ),
+    );
+
+    LokalToast.show(
+      screen,
+      'Exclusive USB dropped to the Android mixer. Bit-perfect is paused.',
+      duration: const Duration(seconds: 8),
+      actionLabel: 'Retry',
+      onAction: () => retries++,
+    );
+    await tester.pumpAndSettle();
+    navigator.currentState!.push(
+      MaterialPageRoute<void>(
+        builder: (_) => const Scaffold(body: Text('New screen')),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('New screen'), findsOneWidget);
+    expect(find.byType(SnackBar), findsNothing);
+    await tester.tap(find.text('Retry'));
+    await tester.pump();
+    expect(retries, 1);
+    expect(find.text('Retry'), findsNothing);
+  });
 }

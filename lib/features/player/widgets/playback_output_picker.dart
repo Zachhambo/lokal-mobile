@@ -12,6 +12,7 @@ import 'package:flick/services/android_audio_device_service.dart';
 import 'package:flick/services/casting/cast_device.dart';
 import 'package:flick/services/casting/casting_service.dart';
 import 'package:flick/services/casting/chromecast_backend.dart';
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 
 /// The full-player output pill's single entry point for Cast, DLNA, and
 /// local audio. Do not use Android's system media-output picker as the only
@@ -80,10 +81,7 @@ class _PlaybackOutputPickerState extends ConsumerState<PlaybackOutputPicker> {
       if (mounted) {
         final warning = castWarning.value;
         if (warning != null && warning.isNotEmpty) {
-          // ScaffoldMessenger survives this modal's dismissal.
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(warning)),
-          );
+          LokalToast.show(context, warning);
         }
         Navigator.of(context).pop();
       }

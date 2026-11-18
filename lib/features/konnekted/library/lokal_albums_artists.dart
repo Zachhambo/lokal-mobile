@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:async';
 
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:flick/features/library_jobs/artist_metadata.dart';
@@ -675,10 +676,9 @@ class _ArtistRow extends ConsumerWidget {
                       );
                     } catch (_) {
                       if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Could not save artist favorite.'),
-                          ),
+                        LokalToast.show(
+                          context,
+                          'Could not save artist favorite.',
                         );
                       }
                     }

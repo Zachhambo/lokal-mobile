@@ -126,8 +126,6 @@ class _BluetoothSettingsScreenState
           : 0,
     );
     if (!mounted) return;
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    if (messenger == null) return;
     if (result.ok) {
       LokalToast.fromSnackBar(context, 
         SnackBar(
@@ -152,9 +150,9 @@ class _BluetoothSettingsScreenState
   Future<void> _openBluetoothCodecSettings() async {
     final ok = await _bt.openBluetoothCodecSettings();
     if (!mounted) return;
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    if (!ok && messenger != null) {
-      LokalToast.fromSnackBar(context, 
+    if (!ok) {
+      LokalToast.fromSnackBar(
+        context,
         SnackBar(
           content: Text(l10n.developerOptionsIsDisabledEnableIt),
           duration: Duration(seconds: 5),

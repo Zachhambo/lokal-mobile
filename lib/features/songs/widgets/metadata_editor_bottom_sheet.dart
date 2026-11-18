@@ -1,3 +1,4 @@
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flick/widgets/common/flick_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -31,7 +32,6 @@ class MetadataEditorBottomSheet extends ConsumerStatefulWidget {
   const MetadataEditorBottomSheet({super.key, required this.song});
 
   static Future<bool> show(BuildContext context, Song song) async {
-    final messenger = ScaffoldMessenger.maybeOf(context);
     final result = await showModalBottomSheet<_MetadataEditorSheetResult>(
       useRootNavigator: true,
       context: context,
@@ -49,25 +49,17 @@ class MetadataEditorBottomSheet extends ConsumerStatefulWidget {
     );
 
     final saved = result?.saved ?? false;
-    if (!context.mounted || messenger == null || result == null) {
+    if (!context.mounted || result == null) {
       return saved;
     }
 
-    // ScaffoldMessenger after pop – per spec, show after sheet is dismissed
-    // using the caller's messenger so it survives the sheet's context disposal.
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            result.verified
-                ? l10n.savedAndVerified
-                : (result.message ?? l10n.savedVerificationPending),
-          ),
-          behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: result.verified ? 2 : 4),
-        ),
-      );
+    LokalToast.show(
+      context,
+      result.verified
+          ? l10n.savedAndVerified
+          : result.message ?? l10n.savedVerificationPending,
+      duration: Duration(seconds: result.verified ? 2 : 4),
+    );
     return saved;
   }
 
@@ -237,7 +229,7 @@ class _MetadataEditorBottomSheetState
       final verified = result.verified;
       final message = verified ? null : result.message;
       if (!mounted) return;
-      // Pop with result; static show() will handle ScaffoldMessenger after pop.
+      // Return the result so the caller can show feedback after the sheet closes.
       Navigator.of(context).pop(
         _MetadataEditorSheetResult(
           saved: true,
