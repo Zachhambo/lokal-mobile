@@ -19,8 +19,8 @@ import 'local_motion_hls_server.dart';
 /// together; interrupted downloads can never masquerade as offline clips.
 class MotionArtOfflineCache {
   MotionArtOfflineCache._({http.Client? client, Directory? directory})
-      : _client = client ?? http.Client(),
-        _directoryOverride = directory;
+    : _client = client ?? http.Client(),
+      _directoryOverride = directory;
 
   static final instance = MotionArtOfflineCache._();
 
@@ -77,11 +77,7 @@ class MotionArtOfflineCache {
       final artwork = AnimatedArtwork.fromJson(
         data['artwork'] as Map<String, dynamic>,
       );
-      final urls = {
-        if (artwork.playbackUrl != null) artwork.playbackUrl!,
-        if (artwork.verticalPlaybackUrl != null) artwork.verticalPlaybackUrl!,
-      };
-      for (final url in urls) {
+      for (final url in _urls(artwork, preferVertical: false)) {
         if (await localFile(url) != null) return artwork;
       }
     } catch (error) {
@@ -90,19 +86,27 @@ class MotionArtOfflineCache {
     return null;
   }
 
+  Set<String> _urls(AnimatedArtwork artwork, {required bool preferVertical}) {
+    return {
+      if (preferVertical) ...[
+        artwork.verticalPlaybackUrl,
+        artwork.videoUrlVertical,
+      ],
+      artwork.playbackUrl,
+      artwork.videoUrl,
+      artwork.verticalPlaybackUrl,
+      artwork.videoUrlVertical,
+    }.nonNulls.toSet();
+  }
+
   /// Prefer an already downloaded video (including a square fallback when a
   /// portrait variant was never cached). Otherwise preserve online quality.
   Future<({String url, String? cachedSource})?> playable(
     AnimatedArtwork artwork, {
     required bool preferVertical,
   }) async {
-    final preferred = preferVertical
-        ? artwork.verticalPlaybackUrl
-        : artwork.playbackUrl;
-    final alternate = preferVertical
-        ? artwork.playbackUrl
-        : artwork.verticalPlaybackUrl;
-    for (final source in {if (preferred != null) preferred, if (alternate != null) alternate}) {
+    final urls = _urls(artwork, preferVertical: preferVertical);
+    for (final source in urls) {
       final file = await localFile(source);
       if (file != null) {
         try {
@@ -117,6 +121,7 @@ class MotionArtOfflineCache {
         }
       }
     }
+    final preferred = urls.firstOrNull;
     if (preferred == null) return null;
     return (url: preferred, cachedSource: null);
   }
@@ -134,7 +139,9 @@ class MotionArtOfflineCache {
       if (name != 'clip.mp4' &&
           name != 'clip.webm' &&
           name != 'clip.mov' &&
-          name != 'playlist.m3u8') return null;
+          name != 'playlist.m3u8') {
+        return null;
+      }
       final file = File('${dir.path}/$name');
       if (!await file.exists() || await file.length() == 0) return null;
       if (name == 'playlist.m3u8' && !await _hasCompleteHlsAssets(file)) {
@@ -209,71 +216,60 @@ class MotionArtOfflineCache {
     Future<bool> Function()? canDownload,
   }) async {
     if (canDownload != null && !await canDownload()) return;
-    final url = preferVertical
-        ? artwork.verticalPlaybackUrl
-        : artwork.playbackUrl;
-    if (url == null || !_secureUrl(url)) return;
     try {
-      final clip = await _ensureClip(url, canDownload: canDownload);
-      if (clip == null) return;
-      final file = await _lookupFile(lookupKey);
-      final temp = File('${file.path}.tmp');
-      await temp.writeAsString(
-        jsonEncode({'artwork': artwork.toJson()}),
-        flush: true,
-      );
-      if (await file.exists()) await file.delete();
-      await temp.rename(file.path);
+      final urls = _urls(artwork, preferVertical: preferVertical);
+      for (final url in urls.where(_secureUrl)) {
+        final clip = await _ensureClip(url, canDownload: canDownload);
+        if (clip == null) continue;
+        await index(lookupKey, artwork);
+        break;
+      }
     } catch (error) {
       devLog('[MotionArt] offline cache write failed: $error');
     }
   }
 
-  /// Upgrade an earlier lookup index using the existing complete media,
-  /// without making a request. Useful when a user has since reordered the
-  /// enabled motion-art sources.
-  Future<bool> indexExisting(String key, AnimatedArtwork artwork) async {
-    for (final source in {
-      if (artwork.playbackUrl != null) artwork.playbackUrl!,
-      if (artwork.verticalPlaybackUrl != null) artwork.verticalPlaybackUrl!,
-    }) {
+  /// Index a completed clip independently of the preference that selected it.
+  Future<void> index(String key, AnimatedArtwork artwork) async {
+    try {
+      final file = await _lookupFile(key);
+      final temp = await file.parent.createTemp('lookup-');
+      try {
+        final entry = File('${temp.path}/entry.json');
+        await entry.writeAsString(
+          jsonEncode({'artwork': artwork.toJson()}),
+          flush: true,
+        );
+        await entry.rename(file.path);
+      } finally {
+        await temp.delete(recursive: true);
+      }
+    } catch (error) {
+      devLog('[MotionArt] offline index write failed: $error');
+    }
+  }
+
+  /// Reindex an already downloaded clip without making a request.
+  Future<void> indexExisting(String key, AnimatedArtwork artwork) async {
+    for (final source in _urls(artwork, preferVertical: false)) {
       if (await localFile(source) != null) {
-        try {
-          final file = await _lookupFile(key);
-          final temp = File('${file.path}.tmp');
-          await temp.writeAsString(
-            jsonEncode({'artwork': artwork.toJson()}),
-            flush: true,
-          );
-          if (await file.exists()) await file.delete();
-          await temp.rename(file.path);
-          return true;
-        } catch (error) {
-          devLog('[MotionArt] offline index migration failed: $error');
-          return false;
-        }
+        await index(key, artwork);
+        return;
       }
     }
-    return false;
   }
 
   Future<File?> _ensureClip(
     String url, {
     Future<bool> Function()? canDownload,
-  }) async {
-    final cached = await localFile(url);
-    if (cached != null) return cached;
-    final existing = _downloads[url];
-    if (existing != null) return existing;
-    if (canDownload != null && !await canDownload()) return null;
-    final job = _download(url, canDownload: canDownload);
-    _downloads[url] = job;
+  }) => _downloads.putIfAbsent(url, () async {
     try {
-      return await job;
+      return await localFile(url) ??
+          await _download(url, canDownload: canDownload);
     } finally {
-      if (identical(_downloads[url], job)) _downloads.remove(url);
+      _downloads.remove(url);
     }
-  }
+  });
 
   Future<File?> _download(
     String url, {
@@ -282,6 +278,7 @@ class MotionArtOfflineCache {
     final target = await _clipDir(url);
     final temp = Directory('${target.path}.partial');
     try {
+      if (canDownload != null && !await canDownload()) return null;
       if (await temp.exists()) await temp.delete(recursive: true);
       await temp.create(recursive: true);
       final entry = Uri.parse(url).path.toLowerCase().endsWith('.m3u8')
@@ -290,10 +287,8 @@ class MotionArtOfflineCache {
       if (entry == null || (canDownload != null && !await canDownload())) {
         return null;
       }
-      await File('${temp.path}/complete.json').writeAsString(
-        jsonEncode({'url': url, 'entry': entry}),
-        flush: true,
-      );
+      await File('${temp.path}/complete.json')
+          .writeAsString(jsonEncode({'url': url, 'entry': entry}), flush: true);
       if (await target.exists()) await target.delete(recursive: true);
       await temp.rename(target.path);
       final result = File('${target.path}/$entry');
@@ -313,30 +308,69 @@ class MotionArtOfflineCache {
     }
   }
 
-  Future<List<int>?> _getBytes(
+  Future<({List<int> bytes, Uri url})?> _getBytes(
     String url,
     int remaining, {
     Future<bool> Function()? canDownload,
+    ({int start, int end})? range,
   }) async {
     if (!_secureUrl(url) ||
         remaining <= 0 ||
         (canDownload != null && !await canDownload())) {
       return null;
     }
-    final request = http.Request('GET', Uri.parse(url));
-    final response = await _client.send(request).timeout(_timeout);
-    if (response.statusCode != 200 ||
-        (response.contentLength != null &&
-            response.contentLength! > remaining)) {
-      return null;
+    if (range != null && range.end - range.start + 1 > remaining) return null;
+
+    final abort = Completer<void>();
+    final request = http.AbortableRequest(
+      'GET',
+      Uri.parse(url),
+      abortTrigger: abort.future,
+    );
+    if (range != null) {
+      request.headers['Range'] = 'bytes=${range.start}-${range.end}';
+      request.headers['Accept-Encoding'] = 'identity';
     }
-    final bytes = <int>[];
-    await for (final chunk in response.stream.timeout(_timeout)) {
-      if (canDownload != null && !await canDownload()) return null;
-      if (bytes.length + chunk.length > remaining) return null;
-      bytes.addAll(chunk);
+    final timer = Timer(_timeout, abort.complete);
+    try {
+      final response = await _client.send(request).timeout(_timeout);
+      final effectiveUrl = switch (response) {
+        http.BaseResponseWithUrl(:final url) => url,
+        _ => request.url,
+      };
+      if (!_secureUrl(effectiveUrl.toString())) return null;
+      final partial = response.statusCode == HttpStatus.partialContent;
+      if (partial && range != null) {
+        final contentRange = response.headers['content-range'] ?? '';
+        if (!contentRange.startsWith('bytes ${range.start}-${range.end}/')) {
+          return null;
+        }
+      } else if (response.statusCode != HttpStatus.ok) {
+        return null;
+      }
+      if (response.contentLength case final int length when length > remaining) {
+        return null;
+      }
+      final bytes = <int>[];
+      await for (final chunk in response.stream.timeout(_timeout)) {
+        if (canDownload != null && !await canDownload()) return null;
+        if (bytes.length + chunk.length > remaining) return null;
+        bytes.addAll(chunk);
+      }
+      if (range == null) return (bytes: bytes, url: effectiveUrl);
+      if (partial) {
+        return bytes.length == range.end - range.start + 1
+            ? (bytes: bytes, url: effectiveUrl)
+            : null;
+      }
+      // Some CDNs ignore Range and serve the whole (still bounded) asset.
+      return bytes.length > range.end
+          ? (bytes: bytes.sublist(range.start, range.end + 1), url: effectiveUrl)
+          : null;
+    } finally {
+      timer.cancel();
+      if (!abort.isCompleted) abort.complete();
     }
-    return bytes;
   }
 
   Future<String?> _downloadProgressive(
@@ -344,26 +378,29 @@ class MotionArtOfflineCache {
     Directory temp, {
     Future<bool> Function()? canDownload,
   }) async {
-    final bytes = await _getBytes(
-      url,
-      maxClipBytes,
-      canDownload: canDownload,
-    );
-    if (bytes == null || bytes.isEmpty) return null;
-    // Preserve the source extension so native video_player selects a decoder.
-    final extension = Uri.parse(url).path.toLowerCase();
-    if (!(extension.endsWith('.mp4') ||
-        extension.endsWith('.m4v') ||
-        extension.endsWith('.mov') ||
-        extension.endsWith('.webm'))) {
-      return null;
+    final response = await _getBytes(url, maxClipBytes, canDownload: canDownload);
+    if (response == null || response.bytes.isEmpty) return null;
+    // Preserve the container extension even when the CDN redirects to an
+    // opaque URL. An MP4's file type box also identifies extensionless clips.
+    String? extension =
+        [response.url, Uri.parse(url)]
+            .map((uri) => uri.path.split('.').last.toLowerCase())
+            .where(const {'mp4', 'm4v', 'mov', 'webm'}.contains)
+            .firstOrNull;
+    final bytes = response.bytes;
+    if (extension == null &&
+        bytes.length >= 12 &&
+        String.fromCharCodes(bytes.getRange(4, 8)) == 'ftyp') {
+      extension = 'mp4';
     }
-    final fileName = extension.endsWith('.webm')
-        ? 'clip.webm'
-        : extension.endsWith('.mov')
-        ? 'clip.mov'
-        : 'clip.mp4';
-    await File('${temp.path}/$fileName').writeAsBytes(bytes, flush: true);
+    final fileName = switch (extension) {
+      'webm' => 'clip.webm',
+      'mov' => 'clip.mov',
+      'mp4' || 'm4v' => 'clip.mp4',
+      _ => null,
+    };
+    if (fileName == null) return null;
+    await File('${temp.path}/$fileName').writeAsBytes(response.bytes, flush: true);
     return fileName;
   }
 
@@ -372,14 +409,14 @@ class MotionArtOfflineCache {
     Directory temp, {
     Future<bool> Function()? canDownload,
   }) async {
-    var playlistUrl = url;
     var body = await _getBytes(
-      playlistUrl,
+      url,
       256 * 1024,
       canDownload: canDownload,
     );
     if (body == null) return null;
-    var playlist = utf8.decode(body, allowMalformed: true);
+    var playlistUrl = body.url;
+    var playlist = utf8.decode(body.bytes, allowMalformed: true);
     if (!playlist.trimLeft().startsWith('#EXTM3U')) return null;
 
     // The service usually selects a bounded rendition already; handle a
@@ -389,32 +426,34 @@ class MotionArtOfflineCache {
       final variants = <(int, String)>[];
       for (var i = 0; i < rows.length - 1; i++) {
         if (!rows[i].startsWith('#EXT-X-STREAM-INF:')) continue;
-        final resolution = RegExp(r'RESOLUTION=(\d+)x(\d+)').firstMatch(rows[i]);
-        final link = rows.skip(i + 1).map((s) => s.trim())
-            .where((s) => s.isNotEmpty && !s.startsWith('#')).firstOrNull;
+        final resolution = RegExp(r'RESOLUTION=(\d+)x(\d+)')
+            .firstMatch(rows[i]);
+        final link = rows
+            .skip(i + 1)
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty && !s.startsWith('#'))
+            .firstOrNull;
         if (link == null) continue;
         final pixels = resolution == null
             ? 0
             : int.parse(resolution[1]!) * int.parse(resolution[2]!);
-        variants.add((pixels, Uri.parse(playlistUrl).resolve(link).toString()));
+        variants.add((pixels, playlistUrl.resolve(link).toString()));
       }
       variants.sort((a, b) => a.$1.compareTo(b.$1));
-      final selected = variants.where((v) => v.$1 >= 480 * 480 &&
-          v.$1 <= 960 * 960).lastOrNull ?? variants.firstOrNull;
+      final selected =
+          variants
+              .where((v) => v.$1 >= 480 * 480 && v.$1 <= 960 * 960)
+              .lastOrNull ??
+          variants.firstOrNull;
       if (selected == null || !_secureUrl(selected.$2)) return null;
-      playlistUrl = selected.$2;
-      body = await _getBytes(
-        playlistUrl,
-        256 * 1024,
-        canDownload: canDownload,
-      );
+      body = await _getBytes(selected.$2, 256 * 1024, canDownload: canDownload);
       if (body == null) return null;
-      playlist = utf8.decode(body, allowMalformed: true);
+      playlistUrl = body.url;
+      playlist = utf8.decode(body.bytes, allowMalformed: true);
     }
 
     // Offline HLS must be finite, clear, and self-contained.
     if (!playlist.contains('#EXT-X-ENDLIST') ||
-        playlist.contains('#EXT-X-BYTERANGE') ||
         playlist.contains('#EXT-X-I-FRAMES-ONLY') ||
         playlist.contains('#EXT-X-PART:') ||
         playlist.contains('#EXT-X-PRELOAD-HINT:') ||
@@ -427,12 +466,36 @@ class MotionArtOfflineCache {
     var totalBytes = 0;
     var assets = 0;
     final rewritten = <String>[];
-    final assetNames = <String, String>{};
+    final assetNames = <(String, ({int start, int end})?), String>{};
 
-    Future<String?> copyAsset(String reference) async {
-      final remote = Uri.parse(playlistUrl).resolve(reference).toString();
+    String? previousSegment;
+    int? previousEnd;
+    String? segmentRange;
+    var segments = 0;
+
+    ({int start, int end})? parseRange(String value, int? nextOffset) {
+      final match = RegExp(r'^(\d+)(?:@(\d+))?$').firstMatch(value);
+      if (match == null) return null;
+      final length = int.tryParse(match[1]!);
+      final start = match[2] == null ? nextOffset : int.tryParse(match[2]!);
+      if (length == null ||
+          length <= 0 ||
+          length > maxClipBytes ||
+          start == null ||
+          start < 0 ||
+          start > 0x7fffffffffffffff - length) {
+        return null;
+      }
+      return (start: start, end: start + length - 1);
+    }
+
+    Future<String?> copyAsset(
+      String remote,
+      ({int start, int end})? range,
+    ) async {
       if (!_secureUrl(remote)) return null;
-      final existing = assetNames[remote];
+      final key = (remote, range);
+      final existing = assetNames[key];
       if (existing != null) return existing;
       if (assets >= 150) return null;
       final extension = Uri.parse(remote).path.toLowerCase();
@@ -446,41 +509,57 @@ class MotionArtOfflineCache {
           ? '.aac'
           : '.bin';
       final local = 'asset_${assets++}$suffix';
-      final bytes = await _getBytes(
+      final response = await _getBytes(
         remote,
         maxClipBytes - totalBytes,
         canDownload: canDownload,
+        range: range,
       );
-      if (bytes == null || bytes.isEmpty) return null;
+      if (response == null || response.bytes.isEmpty) return null;
+      final bytes = response.bytes;
       totalBytes += bytes.length;
       await File('${temp.path}/$local').writeAsBytes(bytes, flush: true);
-      assetNames[remote] = local;
+      assetNames[key] = local;
       return local;
     }
 
     for (final raw in rows) {
       final line = raw.trim();
-      if (line.isEmpty) {
-        rewritten.add(raw);
-      } else if (line.startsWith('#EXT-X-MAP:')) {
+      if (line.startsWith('#EXT-X-MAP:')) {
         final match = RegExp(r'URI="([^"]+)"').firstMatch(line);
         if (match == null) return null;
-        final local = await copyAsset(match[1]!);
+        final byteRange = RegExp(r',?BYTERANGE="([^"]+)",?').firstMatch(line);
+        if (line.contains('BYTERANGE=') && byteRange == null) return null;
+        final remote = playlistUrl.resolve(match[1]!).toString();
+        final range = byteRange == null ? null : parseRange(byteRange[1]!, 0);
+        if (byteRange != null && range == null) return null;
+        final local = await copyAsset(remote, range);
         if (local == null) return null;
-        rewritten.add(line.replaceRange(match.start, match.end, 'URI="$local"'));
-      } else if (line.startsWith('#')) {
+        rewritten.add('#EXT-X-MAP:URI="$local"');
+      } else if (line.startsWith('#EXT-X-BYTERANGE:')) {
+        if (segmentRange != null) return null;
+        segmentRange = line.substring('#EXT-X-BYTERANGE:'.length);
+      } else if (line.isEmpty || line.startsWith('#')) {
         rewritten.add(raw);
       } else {
-        final local = await copyAsset(line);
+        final remote = playlistUrl.resolve(line).toString();
+        final offset = remote == previousSegment ? previousEnd : null;
+        final range = segmentRange == null
+            ? null
+            : parseRange(segmentRange, offset);
+        if (segmentRange != null && range == null) return null;
+        final local = await copyAsset(remote, range);
         if (local == null) return null;
+        previousEnd = range == null ? null : range.end + 1;
+        segmentRange = null;
+        previousSegment = remote;
+        segments++;
         rewritten.add(local);
       }
     }
-    if (assets == 0) return null;
-    await File('${temp.path}/playlist.m3u8').writeAsString(
-      rewritten.join('\n'),
-      flush: true,
-    );
+    if (segments == 0 || segmentRange != null) return null;
+    await File('${temp.path}/playlist.m3u8')
+        .writeAsString(rewritten.join('\n'), flush: true);
     return 'playlist.m3u8';
   }
 
