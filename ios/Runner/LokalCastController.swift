@@ -140,8 +140,18 @@ final class LokalCastController: NSObject, GCKSessionManagerListener,
     let manager = prepare().discoveryManager
     discoveryReply = reply
     manager.startDiscovery()
+    scheduleDiscoveryResult(manager, retryIfEmpty: true)
+  }
+
+  private func scheduleDiscoveryResult(_ manager: GCKDiscoveryManager, retryIfEmpty: Bool) {
     let deadline = DispatchWorkItem { [weak self] in
       guard let self = self, let reply = self.discoveryReply else { return }
+      // The first scan can spend its initial window on the Local Network prompt.
+      if retryIfEmpty && manager.deviceCount == 0 {
+        if !manager.discoveryActive { manager.startDiscovery() }
+        self.scheduleDiscoveryResult(manager, retryIfEmpty: false)
+        return
+      }
       self.discoveryReply = nil
       self.discoveryDeadline = nil
       var devices: [[String: Any]] = []

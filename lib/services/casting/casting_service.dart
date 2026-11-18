@@ -125,18 +125,15 @@ class CastingService {
         try {
           return await run();
         } catch (error) {
-          if (!Platform.isIOS) rethrow;
           failures.add(error);
           return const [];
         }
       }
 
-      final results = await Future.wait<dynamic>([
+      final [dlna, cc] = await Future.wait([
         scan(() => _dlna.discover(timeout: timeout)),
         scan(_chromecast.discover),
       ]);
-      final dlna = results[0] as List<CastDevice>;
-      final cc = results[1] as List<CastDevice>;
       devicesNotifier.value = [...dlna, ...cc];
       _publishDlnaRoutes(dlna);
       if (failures.isNotEmpty) {
@@ -1504,6 +1501,7 @@ class CastingService {
       art = await castArtwork(
         song,
         stillCurrent: current,
+        preferJpeg: true,
       ).timeout(const Duration(seconds: 5));
     } catch (_) {}
     if (!current()) throw const CastHandoffCancelled();

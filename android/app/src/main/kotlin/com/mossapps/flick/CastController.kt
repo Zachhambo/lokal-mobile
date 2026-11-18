@@ -18,7 +18,7 @@ import com.google.android.gms.common.api.PendingResult
 import io.flutter.plugin.common.MethodChannel
 
 // ponytail: Cast driven via MediaRouter route selection + CastContext session.
-// Discovery = MediaRouter routes supporting remote playback; connect = selectRoute
+// Discovery scans for routes matching Lokal's Cast receiver; connect uses selectRoute
 // (CastContext creates the session); control = RemoteMediaClient on the session.
 // All interesting native state (session lifecycle, playback status, volume,
 // route changes) is forwarded to Dart via onEvent → cast_events channel.
@@ -50,6 +50,9 @@ class CastController(private val context: Context) {
     }
     private val receiverNamespace = "urn:x-cast:app.lokal.cast"
     private val handler = Handler(Looper.getMainLooper())
+    private val scanCallback = object : MediaRouter.Callback() {}
+    private val scanReplies = mutableListOf<(List<Map<String, Any>>) -> Unit>()
+    private var scanDeadline: Runnable? = null
 
     /** Called on the main thread for every cast event destined for Dart. */
     var onEvent: ((Map<String, Any?>) -> Unit)? = null
@@ -263,22 +266,35 @@ class CastController(private val context: Context) {
         )
     }
 
-    fun discover(): List<Map<String, Any>> {
-        // ponytail: MediaRouter exposes no selector-filtered getRoutes(); pull all
-        // and keep remote-playback routes (Cast devices surface here).
-        val routes = mediaRouter.routes
-        val out = mutableListOf<Map<String, Any>>()
-        for (r in routes) {
-            if (r.isDefault) continue
-            if (!r.matchesSelector(routeSelector)) continue
-            out.add(
-                mapOf(
-                    "id" to (r.id.toString()),
-                    "name" to (r.name?.toString() ?: "Chromecast"),
-                )
-            )
+    fun discover(reply: (List<Map<String, Any>>) -> Unit) {
+        if (castContext == null) {
+            reply(emptyList())
+            return
         }
-        return out
+        scanReplies.add(reply)
+        if (scanDeadline != null) return
+        // A route snapshot can be empty until an active Cast scan runs.
+        mediaRouter.addCallback(routeSelector, scanCallback, MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN)
+        val deadline = Runnable {
+            val devices = mediaRouter.routes
+                .filter { !it.isDefault && it.isEnabled && it.matchesSelector(routeSelector) }
+                .map { mapOf("id" to it.id, "name" to it.name.ifBlank { "Chromecast" }) }
+            finishDiscovery(devices)
+        }
+        scanDeadline = deadline
+        handler.postDelayed(deadline, 4000L)
+    }
+
+    fun cancelDiscovery() = finishDiscovery(emptyList())
+
+    private fun finishDiscovery(devices: List<Map<String, Any>>) {
+        val deadline = scanDeadline ?: return
+        handler.removeCallbacks(deadline)
+        mediaRouter.removeCallback(scanCallback)
+        scanDeadline = null
+        val replies = scanReplies.toList()
+        scanReplies.clear()
+        for (reply in replies) reply(devices)
     }
 
     fun connect(deviceId: String, result: MethodChannel.Result) {

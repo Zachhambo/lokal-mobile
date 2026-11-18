@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../features/discovery/discovery_http.dart';
@@ -85,12 +87,18 @@ class _CastCompletion {
   bool consumed = false;
 }
 
-Future<String?> castArtwork(Song song, {bool Function()? stillCurrent}) async {
+Future<String?> castArtwork(
+  Song song, {
+  bool Function()? stillCurrent,
+  bool preferJpeg = false,
+}) async {
   bool current() => stillCurrent?.call() ?? true;
   if (!current()) return null;
   final direct = receiverDirectUrl(song.albumArt);
   if (direct != null) return direct;
   String? path = song.albumArt;
+  final uri = path == null ? null : Uri.tryParse(path);
+  if (uri != null && uri.scheme == 'file') path = uri.toFilePath();
   if (path == null || !await File(path).exists()) {
     path = await AlbumArtService.instance.resolveArtworkPath(
       existingPath: song.albumArt,
@@ -106,28 +114,40 @@ Future<String?> castArtwork(Song song, {bool Function()? stillCurrent}) async {
     await handle.close();
   }
   if (!current()) return null;
-  final mime = header.length >= 4 && header[0] == 0x89 && header[1] == 0x50
-      ? 'image/png'
-      : header.length >= 12 &&
-            String.fromCharCodes(header.sublist(8, 12)) == 'WEBP'
-      ? 'image/webp'
-      : header.length >= 3 && String.fromCharCodes(header.take(3)) == 'GIF'
-      ? 'image/gif'
-      : header.length >= 2 && header[0] == 0x42 && header[1] == 0x4d
-      ? 'image/bmp'
-      : 'image/jpeg';
+  final extension = switch (header) {
+    [0xff, 0xd8, 0xff, ...] => 'jpeg',
+    [0x89, 0x50, 0x4e, 0x47, ...] => 'png',
+    [0x52, 0x49, 0x46, 0x46, _, _, _, _, 0x57, 0x45, 0x42, 0x50] => 'webp',
+    [0x47, 0x49, 0x46, ...] => 'gif',
+    [0x42, 0x4d, ...] => 'bmp',
+    _ => null,
+  };
+  if (preferJpeg && extension != 'jpeg') {
+    final jpeg = await compute(_encodeCastJpeg, await File(path).readAsBytes());
+    if (jpeg == null || !current()) return null;
+    return CastContentServer.instance.serveJpeg(jpeg, stillCurrent: current);
+  }
+  if (extension == null) return null;
   return CastContentServer.instance.serve(
     path,
-    filename: 'cover${_imageExtension(path)}',
-    contentType: ContentType.parse(mime),
+    filename: extension == 'jpeg' ? 'cover.jpg' : 'cover.$extension',
+    contentType: ContentType('image', extension),
+    stillCurrent: current,
   );
 }
 
-String _imageExtension(String path) {
-  final extension = path.split('.').last.toLowerCase();
-  return ['png', 'webp', 'gif', 'bmp', 'jpg', 'jpeg'].contains(extension)
-      ? '.$extension'
-      : '.jpg';
+Uint8List? _encodeCastJpeg(Uint8List bytes) {
+  final image = img.decodeImage(bytes);
+  if (image == null) return null;
+  const maxDimension = 640;
+  final width = image.width;
+  final height = image.height;
+  final resized = width >= height && width > maxDimension
+      ? img.copyResize(image, width: maxDimension)
+      : height > maxDimension
+      ? img.copyResize(image, height: maxDimension)
+      : image;
+  return img.encodeJpg(resized, quality: 85);
 }
 
 Future<String?> castMusicVideo(Song song) async {

@@ -1300,7 +1300,7 @@ class MainActivity: FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CAST_CHANNEL).setMethodCallHandler { call, result ->
             val cc = castController
             when (call.method) {
-                "discover" -> result.success(cc?.discover())
+                "discover" -> if (cc == null) result.success(null) else cc.discover { result.success(it) }
                 "connect" -> {
                     if (cc == null) result.error("CAST_UNAVAILABLE", "Google Cast is unavailable.", null)
                     else cc.connect(call.argument<String>("id") ?: "", result)
@@ -5885,6 +5885,7 @@ class MainActivity: FlutterActivity() {
         spotifyWebSession.cancelLogin()
         pendingSpotifyAuthResult?.success(null)
         pendingSpotifyAuthResult = null
+        castController?.cancelDiscovery()
         super.onDestroy()
         audioDeviceCallback?.let {
             try {

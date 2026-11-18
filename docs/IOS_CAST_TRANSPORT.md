@@ -3,8 +3,9 @@
 The single app targets iOS 16+, as selected by the maintainer. AirPlay stays on
 the system route picker. Google Cast uses the existing app receiver picker and
 default media receiver; listening for channel events does not initialize the SDK
-or start discovery. Opening receiver settings opts into a bounded four-second
-scan. SDK analytics logging and automatic discovery are disabled.
+or start discovery. Opening receiver settings opts into a four-second scan
+with an extra four seconds when no Google Cast receiver has appeared. SDK
+analytics logging and automatic discovery are disabled.
 
 ## Dependencies and native proof
 
