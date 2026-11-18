@@ -34,7 +34,6 @@ typedef _DlnaQueueItem = ({
   Song song,
   Object? occurrence,
   String url,
-  String meta,
   String? artworkUrl,
 });
 
@@ -53,6 +52,7 @@ class CastingService {
   Future<void>? _dlnaQueuePreparation;
   bool _dlnaQueueUncertain = false;
   int _dlnaRevision = 0;
+  int _sonosQueueId = 0;
   int _dlnaPollRevision = 0;
   bool _dlnaBusy = false;
   bool _dlnaPollBusy = false;
@@ -1510,16 +1510,28 @@ class CastingService {
       occurrence: occurrence,
       url: url,
       artworkUrl: art,
-      meta: DlnaBackend.metadata(
-        url,
-        title: song.title,
-        artist: song.artist,
-        album: song.album,
-        artworkUrl: art,
-        contentType: castAudioContentType(url, song.fileType),
-      ),
     );
   }
+
+  String _dlnaMetadata(_DlnaQueueItem item, {int? sonosQueueId}) =>
+      DlnaBackend.metadata(
+        item.url,
+        title: item.song.title,
+        artist: item.song.artist,
+        album: item.song.album,
+        artworkUrl: item.artworkUrl,
+        contentType: castAudioContentType(item.url, item.song.fileType),
+        sonosQueueId: sonosQueueId,
+        duration: item.song.duration,
+      );
+
+  // Allocate the DIDL ID at insertion time, even if a prepared item is reused.
+  Future<void> _enqueueSonos(String control, _DlnaQueueItem item) =>
+      _dlna.enqueue(
+        control,
+        item.url,
+        _dlnaMetadata(item, sonosQueueId: ++_sonosQueueId),
+      );
 
   Future<void> _loadDlnaSong(
     Song song, {
@@ -1565,13 +1577,13 @@ class CastingService {
           _dlnaQueueUncertain = true;
           await _dlna.clearQueue(control);
           _dlnaItems.clear();
-          await _dlna.enqueue(control, item.url, item.meta);
+          await _enqueueSonos(control, item);
           _dlnaItems.add(item);
           await _dlna.queueSource(device);
           await _dlna.seekTrack(control, 1);
           _dlnaQueueUncertain = false;
         } else {
-          await _dlna.setMetadataUri(control, item.url, item.meta);
+          await _dlna.setMetadataUri(control, item.url, _dlnaMetadata(item));
           _dlnaItems
             ..clear()
             ..add(item);
@@ -1745,7 +1757,7 @@ class CastingService {
           }
           for (final item in ready.skip(kept)) {
             if (!current()) break;
-            await _dlna.enqueue(control, item.url, item.meta);
+            await _enqueueSonos(control, item);
             _dlnaItems.add(item);
           }
           _dlnaQueueUncertain = false;
@@ -1755,7 +1767,11 @@ class CastingService {
           // advance through confirmed completion instead of becoming a loop.
           if (!repeatOne && next?.url == _dlnaReceiverUri) next = null;
           try {
-            await _dlna.nextUri(control, next?.url ?? '', next?.meta ?? '');
+            await _dlna.nextUri(
+              control,
+              next?.url ?? '',
+              next == null ? '' : _dlnaMetadata(next),
+            );
             final playing = _dlnaItems
                 .where((e) => e.url == _dlnaReceiverUri)
                 .firstOrNull;
