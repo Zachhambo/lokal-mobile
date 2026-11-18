@@ -1,3 +1,4 @@
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flick/widgets/common/flick_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -165,7 +166,6 @@ class _MetadataEditorScreenState extends ConsumerState<MetadataEditorScreen> {
     if (!mounted) return;
 
     if (result.saved) {
-      final messenger = ScaffoldMessenger.of(context);
       final path = widget.song.filePath;
       if (path != null && path.isNotEmpty) {
         PlayerService().syncSongMetadata(
@@ -181,24 +181,14 @@ class _MetadataEditorScreenState extends ConsumerState<MetadataEditorScreen> {
         );
       }
       ref.invalidate(songsProvider);
+      LokalToast.show(
+        context,
+        result.verified
+            ? l10n.savedAndVerified
+            : result.message ?? l10n.savedVerificationPending,
+        duration: Duration(seconds: result.verified ? 2 : 4),
+      );
       Navigator.of(context).pop(true);
-      if (result.verified) {
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(l10n.savedAndVerified),
-            behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 2),
-          ),
-        );
-      } else {
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(result.message ?? l10n.savedVerificationPending),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
     } else {
       setState(() {
         _isSaving = false;

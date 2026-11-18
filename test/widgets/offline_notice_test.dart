@@ -7,12 +7,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:flick/core/constants/app_constants.dart';
-import 'package:flick/core/theme/app_colors.dart';
 import 'package:flick/core/theme/app_theme.dart';
 import 'package:flick/providers/connectivity_provider.dart';
 import 'package:flick/providers/app_preferences_provider.dart';
 import 'package:flick/widgets/common/connection_notice_host.dart';
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 
 class _FakeConnectivity implements Connectivity {
   _FakeConnectivity(this.results);
@@ -36,8 +35,8 @@ class _FakeConnectivity implements Connectivity {
   Future<void> close() => _controller.close();
 }
 
-const _sizeKey = ValueKey('offline_notice_size');
-const _barKey = ValueKey('offline_notice_bar');
+Finder get _offline => find.textContaining("You're offline");
+Finder get _online => find.text('Back online');
 
 Widget _host(
   _FakeConnectivity connectivity, {
@@ -49,14 +48,16 @@ Widget _host(
     theme: AppTheme.darkTheme,
     builder: (context, navigator) => MediaQuery(
       data: mediaQuery ?? MediaQuery.of(context),
-      child: Consumer(
-        builder: (context, ref, _) => ConnectionNoticeHost(
-          showNotice: ref.watch(
-            appPreferencesProvider.select(
-              (preferences) => preferences.connectionNoticesEnabled,
+      child: Overlay.wrap(
+        child: Consumer(
+          builder: (context, ref, _) => ConnectionNoticeHost(
+            showNotice: ref.watch(
+              appPreferencesProvider.select(
+                (preferences) => preferences.connectionNoticesEnabled,
+              ),
             ),
+            child: navigator ?? const SizedBox.shrink(),
           ),
-          child: navigator ?? const SizedBox.shrink(),
         ),
       ),
     ),
@@ -64,30 +65,21 @@ Widget _host(
   ),
 );
 
-double _barHeight(WidgetTester tester) =>
-    tester.getSize(find.byKey(_sizeKey)).height;
-
-Future<void> _settle(WidgetTester tester) async {
-  await tester.pump();
-  await tester.pumpAndSettle();
-}
+ProviderContainer _container(WidgetTester tester) => ProviderScope.containerOf(
+  tester.element(find.byType(ConnectionNoticeHost)),
+);
 
 Future<void> _goOffline(
   WidgetTester tester,
   _FakeConnectivity connectivity,
 ) async {
   connectivity.emit([ConnectivityResult.none]);
-  await tester.pump(
-    ConnectivityNotifier.offlineDebounce + const Duration(milliseconds: 100),
-  );
-  await _settle(tester);
+  await tester.pump();
+  await tester.pump(ConnectivityNotifier.offlineDebounce);
+  await tester.pumpAndSettle();
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-
-  tearDown(() => AppConstants.setAnimationsEnabled(true));
-
   late _FakeConnectivity connectivity;
 
   setUp(() {
@@ -95,295 +87,110 @@ void main() {
     connectivity = _FakeConnectivity([ConnectivityResult.wifi]);
   });
 
-  tearDown(() => connectivity.close());
-
-  testWidgets('stays collapsed while online', (tester) async {
-    await tester.pumpWidget(_host(connectivity));
-    await _settle(tester);
-
-    expect(_barHeight(tester), 0);
-    expect(find.textContaining("You're offline"), findsNothing);
+  tearDown(() async {
+    LokalToast.dismiss();
+    await connectivity.close();
   });
 
-  testWidgets('offline notice dismisses after five seconds without changing connectivity', (tester) async {
-    await tester.pumpWidget(_host(connectivity));
-    await _settle(tester);
-    connectivity.emit([ConnectivityResult.none]);
-    await tester.pump();
-    await tester.pump(
-      ConnectivityNotifier.offlineDebounce + const Duration(milliseconds: 100),
-    );
-    await _settle(tester);
-    expect(_barHeight(tester), greaterThan(0));
-
-    await tester.pump(const Duration(seconds: 5));
-    await _settle(tester);
-    expect(_barHeight(tester), 0);
-    final container = ProviderScope.containerOf(
-      tester.element(find.byType(ConnectionNoticeHost)),
-    );
-    expect(container.read(connectivityProvider), ConnectivityStatus.offline);
-  });
-
-  testWidgets('reconnection confirmation appears after offline notice expired',
-      (tester) async {
-    await tester.pumpWidget(_host(connectivity));
-    await _goOffline(tester, connectivity);
-    await tester.pump(const Duration(seconds: 5));
-    await _settle(tester);
-    expect(_barHeight(tester), 0);
-    connectivity.emit([ConnectivityResult.wifi]);
-    await _settle(tester);
-    expect(find.textContaining('Back online'), findsOneWidget);
-    expect(_barHeight(tester), greaterThan(0));
-    await tester.pump(const Duration(seconds: 2));
-    await _settle(tester);
-    expect(_barHeight(tester), 0);
-  });
-
-  testWidgets('shows a full-width bar at the bottom while offline', (
+  testWidgets('online startup is quiet and offline feedback expires', (
     tester,
   ) async {
     await tester.pumpWidget(_host(connectivity));
-    await _settle(tester);
+    await tester.pumpAndSettle();
+    expect(_offline, findsNothing);
+    expect(_online, findsNothing);
 
     connectivity.emit([ConnectivityResult.none]);
     await tester.pump();
-    expect(_barHeight(tester), 0);
-
-    await tester.pump(
-      ConnectivityNotifier.offlineDebounce + const Duration(milliseconds: 100),
-    );
-    await _settle(tester);
-
-    final barSize = tester.getSize(find.byKey(_barKey));
-    final barBottom = tester.getBottomLeft(find.byKey(_barKey)).dy;
-
-    expect(barSize.height, greaterThan(0));
-    expect(barSize.width, 800);
-    expect(barBottom, 600);
-    expect(find.textContaining("You're offline"), findsOneWidget);
+    expect(_offline, findsNothing);
+    await tester.pump(ConnectivityNotifier.offlineDebounce);
+    await tester.pumpAndSettle();
+    expect(_offline, findsOneWidget);
     expect(
       find.textContaining('Some online features may not work'),
       findsOneWidget,
     );
-  });
-
-  testWidgets('pushes app content up instead of covering it', (tester) async {
-    await tester.pumpWidget(_host(connectivity));
-    await _settle(tester);
-
-    final scaffoldHeightOnline = tester.getSize(find.byType(Scaffold)).height;
-
-    await _goOffline(tester, connectivity);
-
-    final scaffoldHeightOffline = tester.getSize(find.byType(Scaffold)).height;
-    final barTop = tester.getTopLeft(find.byKey(_barKey)).dy;
-    final scaffoldBottom = tester.getBottomLeft(find.byType(Scaffold)).dy;
-
-    expect(scaffoldHeightOffline, lessThan(scaffoldHeightOnline));
-    expect(scaffoldBottom, lessThanOrEqualTo(barTop));
-  });
-
-  testWidgets('shows an animated check and green background when back online', (
-    tester,
-  ) async {
-    await tester.pumpWidget(_host(connectivity));
-    await _settle(tester);
-    await _goOffline(tester, connectivity);
     expect(find.byIcon(LucideIcons.wifiOff), findsOneWidget);
+    expect(
+      find.bySemanticsLabel("You're offline. Some online features may not work."),
+      findsOneWidget,
+    );
+
+    await tester.pump(const Duration(seconds: 5));
+    expect(_offline, findsNothing);
+    expect(
+      _container(tester).read(connectivityProvider),
+      ConnectivityStatus.offline,
+    );
 
     connectivity.emit([ConnectivityResult.wifi]);
-    await _settle(tester);
-
-    expect(_barHeight(tester), greaterThan(0));
-    expect(find.byIcon(LucideIcons.check), findsOneWidget);
-    expect(find.byIcon(LucideIcons.wifiOff), findsNothing);
-    expect(find.textContaining('Back online'), findsOneWidget);
-
-    final decoration =
-        tester.widget<AnimatedContainer>(find.byKey(_barKey)).decoration
-            as BoxDecoration;
-    expect(decoration.color, AppColors.success);
-
-    await tester.pump(const Duration(seconds: 2));
     await tester.pumpAndSettle();
-
-    expect(_barHeight(tester), 0);
+    expect(_online, findsOneWidget);
+    expect(find.byIcon(LucideIcons.check), findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    expect(_online, findsNothing);
   });
 
-  testWidgets('does not block taps on the interface above it', (tester) async {
-    var taps = 0;
-    await tester.pumpWidget(
-      _host(
-        connectivity,
-        home: Scaffold(
-          body: Align(
-            alignment: Alignment.bottomCenter,
-            child: TextButton(
-              onPressed: () => taps++,
-              child: const Text('tap me'),
-            ),
-          ),
-        ),
-      ),
-    );
-    await _settle(tester);
-    await _goOffline(tester, connectivity);
-    expect(find.textContaining("You're offline"), findsOneWidget);
-
-    await tester.tap(find.text('tap me'));
-    await tester.pump();
-
-    expect(taps, 1);
+  testWidgets('offline startup shows the pill', (tester) async {
+    connectivity.results = [ConnectivityResult.none];
+    await tester.pumpWidget(_host(connectivity));
+    await tester.pumpAndSettle();
+    expect(_offline, findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
   });
 
-  for (final bottomInset in [24.0, 48.0]) {
-    testWidgets('reserves the $bottomInset bottom inset only once', (
-      tester,
-    ) async {
-      late MediaQueryData viewport;
-      const anchorKey = ValueKey('safe_area_bottom');
-      final padding = EdgeInsets.fromLTRB(12, 24, 8, bottomInset);
+  testWidgets(
+    'the pill leaves the viewport and insets intact and passes taps through',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 540);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      const media = MediaQueryData(
+        size: Size(360, 540),
+        padding: EdgeInsets.only(top: 24),
+        viewPadding: EdgeInsets.only(top: 24, bottom: 48),
+        viewInsets: EdgeInsets.only(bottom: 192),
+        textScaler: TextScaler.linear(2),
+      );
+      late MediaQueryData pageMedia;
+      var taps = 0;
       await tester.pumpWidget(
         _host(
           connectivity,
-          mediaQuery: MediaQueryData(
-            size: const Size(800, 600),
-            padding: padding,
-            viewPadding: padding,
-          ),
-          home: Scaffold(
-            body: Builder(
-              builder: (context) {
-                viewport = MediaQuery.of(context);
-                return const SafeArea(
-                  child: Align(
-                    alignment: Alignment.bottomCenter,
-                    child: SizedBox(key: anchorKey, width: 40, height: 40),
-                  ),
-                );
-              },
-            ),
+          mediaQuery: media,
+          home: Builder(
+            builder: (context) {
+              pageMedia = MediaQuery.of(context);
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => taps++,
+                child: const SizedBox.expand(),
+              );
+            },
           ),
         ),
       );
-      await _settle(tester);
-      expect(viewport.size, const Size(800, 600));
-      expect(viewport.padding, padding);
-      expect(tester.getBottomLeft(find.byKey(anchorKey)).dy, 600 - bottomInset);
-
-      await _goOffline(tester, connectivity);
-      final barTop = tester.getTopLeft(find.byKey(_barKey)).dy;
-      expect(viewport.size.height, barTop);
-      expect(viewport.padding.bottom, 0);
-      expect(viewport.viewPadding.bottom, 0);
-      expect(viewport.padding.top, padding.top);
-      expect(viewport.padding.left, padding.left);
-      expect(viewport.padding.right, padding.right);
-      expect(tester.getBottomLeft(find.byKey(anchorKey)).dy, barTop);
-
-      connectivity.emit([ConnectivityResult.wifi]);
-      await _settle(tester);
-      expect(viewport.padding.bottom, 0);
-      await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
-      expect(viewport.size, const Size(800, 600));
-      expect(viewport.padding, padding);
-      expect(viewport.viewPadding, padding);
-    });
-  }
-
-  testWidgets('updates viewport and insets throughout the notice animation', (
-    tester,
-  ) async {
-    late MediaQueryData viewport;
-    const inset = 48.0;
-    await tester.pumpWidget(
-      _host(
-        connectivity,
-        mediaQuery: const MediaQueryData(
-          size: Size(800, 600),
-          padding: EdgeInsets.only(bottom: inset),
-          viewPadding: EdgeInsets.only(bottom: inset),
+      await _goOffline(tester, connectivity);
+      final pill = find.ancestor(
+        of: _offline,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Material && widget.shape is StadiumBorder,
         ),
-        home: Builder(
-          builder: (context) {
-            viewport = MediaQuery.of(context);
-            return const Scaffold(body: SizedBox.expand());
-          },
-        ),
-      ),
-    );
-    await _settle(tester);
-    connectivity.emit([ConnectivityResult.none]);
-    await tester.pump();
-    await tester.pump(ConnectivityNotifier.offlineDebounce);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 40));
-
-    void expectConsistentViewport() {
-      final height = _barHeight(tester);
-      expect(viewport.size.height, closeTo(600 - height, 0.001));
-      expect(
-        viewport.padding.bottom,
-        closeTo((inset - height).clamp(0, inset), 0.001),
       );
-      expect(viewport.viewPadding.bottom, viewport.padding.bottom);
-    }
-
-    expect(_barHeight(tester), greaterThan(0));
-    expect(viewport.padding.bottom, greaterThan(0));
-    expectConsistentViewport();
-    await tester.pumpAndSettle();
-    expectConsistentViewport();
-
-    connectivity.emit([ConnectivityResult.wifi]);
-    await _settle(tester);
-    await tester.pump(const Duration(seconds: 2));
-    await tester.pump(const Duration(milliseconds: 40));
-    expectConsistentViewport();
-    await tester.pumpAndSettle();
-    expect(viewport.padding.bottom, inset);
-  });
-
-  testWidgets('preserves keyboard clearance in the smaller viewport', (
-    tester,
-  ) async {
-    late MediaQueryData viewport;
-    const anchorKey = ValueKey('above_keyboard');
-    await tester.pumpWidget(
-      _host(
-        connectivity,
-        mediaQuery: const MediaQueryData(
-          size: Size(800, 600),
-          viewPadding: EdgeInsets.only(bottom: 24),
-          viewInsets: EdgeInsets.only(bottom: 240),
-        ),
-        home: Builder(
-          builder: (context) {
-            viewport = MediaQuery.of(context);
-            return const Scaffold(
-              body: Align(
-                alignment: Alignment.bottomCenter,
-                child: SizedBox(key: anchorKey, width: 40, height: 40),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-    await _settle(tester);
-    final keyboardTop = tester.getBottomLeft(find.byKey(anchorKey)).dy;
-    expect(keyboardTop, 360);
-
-    await _goOffline(tester, connectivity);
-    expect(
-      viewport.viewInsets.bottom,
-      closeTo(240 - _barHeight(tester), 0.001),
-    );
-    expect(tester.getBottomLeft(find.byKey(anchorKey)).dy, keyboardTop);
-  });
+      expect(pill, findsOneWidget);
+      expect(tester.getSize(pill).width, lessThan(360));
+      expect(tester.getTopLeft(pill).dy, greaterThanOrEqualTo(24));
+      expect(tester.getCenter(pill).dy, lessThan(135));
+      expect(pageMedia, media);
+      await tester.tapAt(tester.getCenter(pill));
+      expect(taps, 1);
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(seconds: 5));
+    },
+  );
 
   testWidgets('disabled notices stay hidden without disabling connectivity', (
     tester,
@@ -392,79 +199,73 @@ void main() {
       'app_connection_notices_enabled': false,
     });
     await tester.pumpWidget(_host(connectivity));
-    await _settle(tester);
-    final container = ProviderScope.containerOf(
-      tester.element(find.byType(ConnectionNoticeHost)),
-    );
+    await tester.pumpAndSettle();
+    final container = _container(tester);
     container.read(connectivityProvider);
+    await tester.pumpAndSettle();
     await _goOffline(tester, connectivity);
     expect(container.read(connectivityProvider), ConnectivityStatus.offline);
-    expect(find.byKey(_sizeKey), findsNothing);
-    expect(tester.getSize(find.byType(Scaffold)).height, 600);
+    expect(_offline, findsNothing);
 
     connectivity.emit([ConnectivityResult.wifi]);
-    await _settle(tester);
+    await tester.pumpAndSettle();
     expect(container.read(connectivityProvider), ConnectivityStatus.online);
-    expect(find.textContaining('Back online'), findsNothing);
+    expect(_online, findsNothing);
   });
 
   testWidgets(
-    'turning notices off restores layout and on shows current status',
+    'toggling notices off clears their pill and on shows current status',
     (tester) async {
       await tester.pumpWidget(_host(connectivity));
-      await _settle(tester);
+      await tester.pumpAndSettle();
       await _goOffline(tester, connectivity);
-      final container = ProviderScope.containerOf(
-        tester.element(find.byType(ConnectionNoticeHost)),
-      );
-      final preferences = container.read(appPreferencesProvider.notifier);
+      expect(_offline, findsOneWidget);
+
+      final preferences = _container(tester)
+          .read(appPreferencesProvider.notifier);
       await preferences.setConnectionNoticesEnabled(false);
-      await _settle(tester);
-      expect(find.byKey(_sizeKey), findsNothing);
-      expect(tester.getSize(find.byType(Scaffold)).height, 600);
+      await tester.pumpAndSettle();
+      expect(_offline, findsNothing);
 
       await preferences.setConnectionNoticesEnabled(true);
-      await _settle(tester);
-      expect(find.textContaining("You're offline"), findsOneWidget);
-      expect(_barHeight(tester), greaterThan(0));
+      await tester.pumpAndSettle();
+      expect(_offline, findsOneWidget);
+      await tester.pump(const Duration(seconds: 5));
     },
   );
 
-  testWidgets('a new offline transition cancels the back-online timeout', (
+  testWidgets('disabling connectivity notices leaves a newer pill visible', (
     tester,
   ) async {
     await tester.pumpWidget(_host(connectivity));
-    await _settle(tester);
-    await _goOffline(tester, connectivity);
-    connectivity.emit([ConnectivityResult.wifi]);
-    await _settle(tester);
-    await _goOffline(tester, connectivity);
-    await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
-    expect(_barHeight(tester), greaterThan(0));
-    expect(find.textContaining("You're offline"), findsOneWidget);
+    await _goOffline(tester, connectivity);
+    LokalToast.show(tester.element(find.byType(Scaffold)), 'Saved');
+
+    final preferences = _container(tester)
+        .read(appPreferencesProvider.notifier);
+    await preferences.setConnectionNoticesEnabled(false);
+    await tester.pumpAndSettle();
+    expect(_offline, findsNothing);
+    expect(find.text('Saved'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 3));
   });
 
-  testWidgets('fits a short phone viewport with enlarged text', (tester) async {
-    tester.view.physicalSize = const Size(360, 540);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(
-      _host(
-        connectivity,
-        mediaQuery: const MediaQueryData(
-          size: Size(360, 540),
-          padding: EdgeInsets.only(top: 24, bottom: 48),
-          viewPadding: EdgeInsets.only(top: 24, bottom: 48),
-          textScaler: TextScaler.linear(2),
-        ),
-      ),
-    );
-    await _settle(tester);
-    await _goOffline(tester, connectivity);
-    expect(tester.takeException(), isNull);
-    expect(tester.getSize(find.byKey(_barKey)).width, 360);
-    expect(tester.getBottomLeft(find.byKey(_barKey)).dy, 540);
-  });
+  testWidgets(
+    'a new offline transition replaces the back-online pill and timer',
+    (tester) async {
+      await tester.pumpWidget(_host(connectivity));
+      await tester.pumpAndSettle();
+      await _goOffline(tester, connectivity);
+      connectivity.emit([ConnectivityResult.wifi]);
+      await tester.pumpAndSettle();
+      expect(_online, findsOneWidget);
+
+      await _goOffline(tester, connectivity);
+      await tester.pump(const Duration(seconds: 3));
+      expect(_online, findsNothing);
+      expect(_offline, findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+    },
+  );
 }

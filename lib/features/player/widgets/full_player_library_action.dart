@@ -8,6 +8,7 @@ import 'package:flick/l10n/l10n.dart';
 import 'package:flick/models/song.dart';
 import 'package:flick/providers/songs_provider.dart';
 import 'package:flick/services/link/lokal_desktop_source.dart';
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 
 String _normalize(String value) =>
     value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
@@ -102,11 +103,12 @@ class _FullPlayerLibraryActionState extends ConsumerState<FullPlayerLibraryActio
       if (mounted) ref.invalidate(fullPlayerInLibraryProvider(song));
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(lokalText(
+        LokalToast.show(
+          context,
+          lokalText(
             'Could not save {arg0}: {arg1}',
             args: {'arg0': song.title, 'arg1': '$error'},
-          ))),
+          ),
         );
       }
     } finally {

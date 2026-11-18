@@ -1,3 +1,4 @@
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flick/widgets/common/cached_image_widget.dart';
 import 'package:flick/widgets/common/flick_artwork_placeholder.dart';
 import 'package:flutter/material.dart';
@@ -42,9 +43,7 @@ class _FlowScreenState extends ConsumerState<FlowScreen> {
     }
   }
 
-  void _message(String message) =>
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(message)));
+  void _message(String message) => LokalToast.show(context, message);
 
   void _retry() {
     ref.invalidate(songsProvider);

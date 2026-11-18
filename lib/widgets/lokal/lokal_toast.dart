@@ -5,9 +5,8 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 
 /// Global, themed, top-centered in-app notification surface.
 ///
-/// Unlike a ScaffoldMessenger snackbar it never occupies the footer/player
-/// area. Transient notifications replace each other in place; long-running
-/// operations update a single pill and are removed by their original owner.
+/// Transient notifications replace each other in place. Long-running
+/// operations update a single pill that the original owner can dismiss.
 class LokalToast {
   LokalToast._();
 
@@ -24,11 +23,20 @@ class LokalToast {
     Duration duration = const Duration(seconds: 3),
     String? actionLabel,
     VoidCallback? onAction,
+    Widget? leading,
+    Object? owner,
+    String? semanticsLabel,
   }) {
     _present(
       context,
-      _ToastData(message: message, actionLabel: actionLabel, onAction: onAction),
-      owner: null,
+      _ToastData(
+        message: message,
+        actionLabel: actionLabel,
+        onAction: onAction,
+        leading: leading,
+        semanticsLabel: semanticsLabel,
+      ),
+      owner: owner,
       duration: duration,
     );
   }
@@ -78,7 +86,7 @@ class LokalToast {
     if (duration != null) _timer = Timer(duration, dismiss);
   }
 
-  /// Ignore a stale progress owner's clear; a newer notice is visible instead.
+  /// A stale owner cannot dismiss a newer notice.
   static void dismiss({Object? owner}) {
     if (owner != null && !identical(_owner, owner)) return;
     _remove();
@@ -100,12 +108,16 @@ class _ToastData {
   const _ToastData({
     required this.message,
     this.loading = false,
+    this.leading,
+    this.semanticsLabel,
     this.content,
     this.actionLabel,
     this.onAction,
   });
   final String message;
   final bool loading;
+  final Widget? leading;
+  final String? semanticsLabel;
   final Widget? content;
   final String? actionLabel;
   final VoidCallback? onAction;
@@ -167,6 +179,12 @@ class _ToastHost extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(width: 12),
+                          ] else if (notice.leading case final leading?) ...[
+                            IconTheme.merge(
+                              data: IconThemeData(color: scheme.onSurface),
+                              child: leading,
+                            ),
+                            const SizedBox(width: 10),
                           ],
                           Flexible(
                             child: DefaultTextStyle(
@@ -178,7 +196,11 @@ class _ToastHost extends StatelessWidget {
                               ),
                               maxLines: 3,
                               overflow: TextOverflow.ellipsis,
-                              child: notice.content ?? Text(notice.message),
+                              child: notice.content ??
+                                  Text(
+                                    notice.message,
+                                    semanticsLabel: notice.semanticsLabel,
+                                  ),
                             ),
                           ),
                           if (notice.actionLabel != null && notice.onAction != null) ...[

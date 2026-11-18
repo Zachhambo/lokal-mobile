@@ -100,8 +100,6 @@ class FlickPlayerApp extends StatelessWidget {
       // null means "follow the device locale".
       locale: selectedLocale,
       home: const _RootRouter(),
-      // Global connectivity notice. It sits below the app content so it is
-      // never covered by routes and never covers any interface itself.
       builder: (context, child) {
         // Keep the global `l10n` accessor pointed at the active locale, so
         // service-layer strings resolve consistently with the widget layer.
@@ -117,17 +115,20 @@ class FlickPlayerApp extends StatelessWidget {
           ),
           child: LokalPerformanceScope(
             enabled: appearance.ultraPerformanceMode,
-            child: Consumer(
-              builder: (context, ref, _) => ConnectionNoticeHost(
-                showNotice: ref.watch(
-                  appPreferencesProvider.select(
-                    (preferences) => preferences.connectionNoticesEnabled,
+            // Keep global pills above the navigator, including new routes.
+            child: Overlay.wrap(
+              child: Consumer(
+                builder: (context, ref, _) => ConnectionNoticeHost(
+                  showNotice: ref.watch(
+                    appPreferencesProvider.select(
+                      (preferences) => preferences.connectionNoticesEnabled,
+                    ),
                   ),
-                ),
-                child: LokalPerformanceAdvisor(
-                  child: IosAudioRecoveryHost(
-                    child: IosTransferRoot(
-                      child: child ?? const SizedBox.shrink(),
+                  child: LokalPerformanceAdvisor(
+                    child: IosAudioRecoveryHost(
+                      child: IosTransferRoot(
+                        child: child ?? const SizedBox.shrink(),
+                      ),
                     ),
                   ),
                 ),

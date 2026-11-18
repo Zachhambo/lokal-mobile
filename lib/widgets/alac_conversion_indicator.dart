@@ -1,3 +1,4 @@
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flick/providers/alac_converter_provider.dart';
@@ -203,56 +204,35 @@ class AlacMetadataCard extends ConsumerWidget {
   }
 }
 
-/// Snackbar helper for conversion notifications
+/// Toasts for ALAC conversion feedback.
 class AlacConversionNotifications {
   static void showConversionStarted(BuildContext context, String fileName) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            const SizedBox(width: 16),
-            Expanded(child: Text(l10n.convertingToWav(fileName))),
-          ],
-        ),
-        duration: const Duration(seconds: 2),
+    LokalToast.show(
+      context,
+      l10n.convertingToWav(fileName),
+      duration: const Duration(seconds: 2),
+      leading: const SizedBox.square(
+        dimension: 16,
+        child: CircularProgressIndicator(strokeWidth: 2),
       ),
     );
   }
 
   static void showConversionComplete(BuildContext context, String fileName) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.check_circle, color: Colors.green),
-            const SizedBox(width: 16),
-            Expanded(child: Text(l10n.convertedSuccessfully(fileName))),
-          ],
-        ),
-        backgroundColor: Colors.green.shade700,
-        duration: const Duration(seconds: 2),
-      ),
+    LokalToast.show(
+      context,
+      l10n.convertedSuccessfully(fileName),
+      duration: const Duration(seconds: 2),
+      leading: const Icon(Icons.check_circle_outline, size: 18),
     );
   }
 
   static void showConversionError(BuildContext context, String error) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.error, color: Colors.white),
-            const SizedBox(width: 16),
-            Expanded(child: Text(l10n.conversionFailed(error))),
-          ],
-        ),
-        backgroundColor: Colors.red.shade700,
-        duration: const Duration(seconds: 4),
-      ),
+    LokalToast.show(
+      context,
+      l10n.conversionFailed(error),
+      duration: const Duration(seconds: 4),
+      leading: const Icon(Icons.error_outline, size: 18),
     );
   }
 }

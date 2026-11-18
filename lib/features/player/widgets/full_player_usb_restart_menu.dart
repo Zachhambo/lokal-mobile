@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flick/features/songs/widgets/song_actions_bottom_sheet.dart';
@@ -93,15 +94,13 @@ Future<void> _restartUsbEngineFromFullPlayer(
   PlayerService player,
 ) async {
   if (!context.mounted) return;
-  final messenger = ScaffoldMessenger.maybeOf(context);
   void notice(String message, {bool short = false}) {
-    if (!context.mounted || messenger == null) return;
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(SnackBar(
-      content: Text(message),
-      behavior: SnackBarBehavior.floating,
+    if (!context.mounted) return;
+    LokalToast.show(
+      context,
+      message,
       duration: Duration(seconds: short ? 3 : 7),
-    ));
+    );
   }
 
   try {

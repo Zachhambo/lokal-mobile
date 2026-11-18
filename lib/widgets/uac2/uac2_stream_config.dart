@@ -1,3 +1,4 @@
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flick/core/theme/lokal_tokens.dart';
 import 'package:flick/widgets/lokal/lokal_choice_sheet.dart';
@@ -286,11 +287,10 @@ class _Uac2StreamConfigState extends ConsumerState<Uac2StreamConfig> {
 
     final success = await deviceStatusNotifier.startStreaming(format);
     if (!success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.failedToStartStreaming),
-          backgroundColor: Colors.red,
-        ),
+      LokalToast.show(
+        context,
+        l10n.failedToStartStreaming,
+        leading: const Icon(Icons.error_outline, size: 18),
       );
     }
   }
@@ -299,11 +299,10 @@ class _Uac2StreamConfigState extends ConsumerState<Uac2StreamConfig> {
     final deviceStatusNotifier = ref.read(uac2DeviceStatusProvider.notifier);
     final success = await deviceStatusNotifier.stopStreaming();
     if (!success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.failedToStopStreaming),
-          backgroundColor: Colors.red,
-        ),
+      LokalToast.show(
+        context,
+        l10n.failedToStopStreaming,
+        leading: const Icon(Icons.error_outline, size: 18),
       );
     }
   }

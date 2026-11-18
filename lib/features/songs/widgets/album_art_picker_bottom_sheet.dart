@@ -1,3 +1,4 @@
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flick/core/constants/app_constants.dart';
@@ -17,7 +18,6 @@ class AlbumArtPickerBottomSheet extends StatefulWidget {
   final Song song;
 
   static Future<bool> show(BuildContext context, Song song) async {
-    final messenger = ScaffoldMessenger.maybeOf(context);
     final result = await showModalBottomSheet<_AlbumArtSheetResult>(
       useRootNavigator: true,
       context: context,
@@ -30,18 +30,11 @@ class AlbumArtPickerBottomSheet extends StatefulWidget {
     );
 
     final changed = result != null;
-    if (!context.mounted || messenger == null || result == null) {
+    if (!context.mounted || result == null) {
       return changed;
     }
 
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(result.message),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    LokalToast.show(context, result.message);
     return changed;
   }
 
@@ -266,11 +259,7 @@ class _AlbumArtPickerBottomSheetState extends State<AlbumArtPickerBottomSheet> {
   }
 
   void _showInlineMessage(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-      );
+    LokalToast.show(context, message);
   }
 
   @override

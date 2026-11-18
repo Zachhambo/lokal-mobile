@@ -1,3 +1,4 @@
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flick/core/theme/lokal_tokens.dart';
 import 'package:flick/l10n/l10n.dart';
 import 'package:flick/widgets/lokal/lokal_glass.dart';
@@ -23,11 +24,7 @@ class LokalDiscordButton extends StatelessWidget {
       // A missing external handler must not break the current page.
     }
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Discord: ${lokalText('Try again in a moment.')}'),
-      ),
-    );
+    LokalToast.show(context, 'Discord: ${lokalText('Try again in a moment.')}');
   }
 
   @override

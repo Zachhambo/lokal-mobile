@@ -1,3 +1,5 @@
+import 'package:flick/widgets/lokal/lokal_toast.dart';
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -54,14 +56,12 @@ class _Uac2FallbackManagerState extends ConsumerState<Uac2FallbackManager> {
     final success = await service.activateFallback();
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            success
-                ? l10n.fallbackAudioActivated
-                : l10n.failedToActivateFallback,
-          ),
-          backgroundColor: success ? Colors.green : Colors.red,
+      LokalToast.show(
+        context,
+        success ? l10n.fallbackAudioActivated : l10n.failedToActivateFallback,
+        leading: Icon(
+          success ? Icons.check_circle_outline : Icons.error_outline,
+          size: 18,
         ),
       );
     }
@@ -74,14 +74,14 @@ class _Uac2FallbackManagerState extends ConsumerState<Uac2FallbackManager> {
     final success = await service.deactivateFallback();
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            success
-                ? l10n.fallbackAudioDeactivated
-                : l10n.failedToDeactivateFallback,
-          ),
-          backgroundColor: success ? Colors.green : Colors.red,
+      LokalToast.show(
+        context,
+        success
+            ? l10n.fallbackAudioDeactivated
+            : l10n.failedToDeactivateFallback,
+        leading: Icon(
+          success ? Icons.check_circle_outline : Icons.error_outline,
+          size: 18,
         ),
       );
     }
