@@ -313,12 +313,56 @@ class DlnaBackend {
     'RemoveAllTracksFromQueue',
     '<InstanceID>0</InstanceID>',
   );
-  Future<void> enqueue(String control, String url, String meta) => _soap(
-    control,
-    _avTransportType,
-    'AddURIToQueue',
-    '<InstanceID>0</InstanceID><EnqueuedURI>${_esc(url)}</EnqueuedURI><EnqueuedURIMetaData>${_esc(meta)}</EnqueuedURIMetaData><DesiredFirstTrackNumberEnqueued>0</DesiredFirstTrackNumberEnqueued><EnqueueAsNext>0</EnqueueAsNext>',
-  );
+  Future<int?> enqueue(
+    String control,
+    String url,
+    String meta, {
+    int position = 0,
+  }) async {
+    final reply = await _soap(
+      control,
+      _avTransportType,
+      'AddURIToQueue',
+      '<InstanceID>0</InstanceID><EnqueuedURI>${_esc(url)}</EnqueuedURI>'
+      '<EnqueuedURIMetaData>${_esc(meta)}</EnqueuedURIMetaData>'
+      '<DesiredFirstTrackNumberEnqueued>$position</DesiredFirstTrackNumberEnqueued>'
+      '<EnqueueAsNext>0</EnqueueAsNext>',
+    );
+    final result = xml.XmlDocument.parse(reply);
+    int? number(String name) => int.tryParse(
+      result.findAllElements(name, namespaceUri: '*').firstOrNull?.innerText ?? '',
+    );
+    final added = number('NumTracksAdded');
+    final index = number('FirstTrackNumberEnqueued');
+    if ((added != null && added != 1) || (index != null && index < 1)) {
+      throw StateError('Sonos did not add the track to its queue.');
+    }
+    return index;
+  }
+
+  Future<String?> speakerArtwork(String control, String mediaUrl) async {
+    final requestUri = Uri.parse(control).resolve('/getaa').replace(
+      queryParameters: {'u': mediaUrl},
+    );
+    final client = _client ?? http.Client();
+    try {
+      final request = http.Request('GET', requestUri)..followRedirects = false;
+      final response = await client.send(request).timeout(
+        const Duration(milliseconds: 800),
+      );
+      unawaited(response.stream.listen((_) {}).cancel());
+      final type = response.headers['content-type']?.split(';').first.trim().toLowerCase();
+      if (response.statusCode == 200 && {'image/jpeg', 'image/png'}.contains(type)) {
+        // The Sonos app resolves this relative URL on its own speaker.
+        return '/getaa?${requestUri.query}';
+      }
+    } catch (_) {
+      // No embedded cover, or this speaker cannot extract it.
+    } finally {
+      if (_client == null) client.close();
+    }
+    return null;
+  }
   Future<void> removeQueueTail(String control, int start, int count) => _soap(
     control,
     _avTransportType,
@@ -447,6 +491,7 @@ class DlnaBackend {
       bool playing,
       String state,
       String uri,
+      String? resourceUri,
       int track,
     })?
   >
@@ -459,6 +504,17 @@ class DlnaBackend {
         '<InstanceID>0</InstanceID>',
       );
       final doc = xml.XmlDocument.parse(res);
+      String? resourceUri;
+      final metadata = doc.findAllElements('TrackMetaData', namespaceUri: '*')
+          .firstOrNull?.innerText;
+      if (metadata != null && metadata.startsWith('<')) {
+        try {
+          resourceUri = xml.XmlDocument.parse(metadata)
+              .findAllElements('res', namespaceUri: '*').firstOrNull?.innerText;
+        } on xml.XmlException {
+          // Some firmware omits or truncates the optional track metadata.
+        }
+      }
       final posStr = doc
           .findAllElements('RelTime', namespaceUri: '*')
           .firstOrNull
@@ -485,6 +541,7 @@ class DlnaBackend {
         duration: _parseTime(durStr) ?? Duration.zero,
         playing: state == 'PLAYING',
         state: state,
+        resourceUri: resourceUri,
         uri:
             doc
                 .findAllElements('TrackURI', namespaceUri: '*')

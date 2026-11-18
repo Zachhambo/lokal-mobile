@@ -42,6 +42,24 @@ class CastContentServer {
         _relays.containsKey(token);
   }
 
+  bool ownsFileUrl(String url) =>
+      ownsUrl(url) && _paths.containsKey(Uri.parse(url).pathSegments.first);
+
+  bool sameSource(String expected, String reported) {
+    if (expected == reported) return true;
+    final first = Uri.tryParse(expected);
+    final second = Uri.tryParse(reported);
+    if (first == null || second == null) return false;
+    if (first == second) return true;
+    // For Lokal's server only, the token identifies the bytes. The player
+    // may rewrite the optional display filename without changing the source.
+    return ownsUrl(expected) &&
+        ownsUrl(reported) &&
+        first.scheme == second.scheme &&
+        first.host == second.host &&
+        first.pathSegments.first == second.pathSegments.first;
+  }
+
   /// Retain only the receiver's current queue window, including its covers.
   /// Already-open file responses hold their own handles until they finish.
   void retainUrls(Iterable<String> urls) {

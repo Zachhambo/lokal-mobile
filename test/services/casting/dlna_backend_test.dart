@@ -13,6 +13,68 @@ String text(XmlDocument doc, String name) =>
     doc.findAllElements(name, namespaceUri: '*').first.innerText;
 void main() {
   test(
+    'speaker cover is selected only for a successful image response',
+    () async {
+      const media = 'http://phone:8000/token/track.mp3';
+      var found = true;
+      final backend = DlnaBackend(
+        client: MockClient((request) async {
+          expect(request.method, 'GET');
+          expect(request.url.path, '/getaa');
+          expect(request.url.queryParameters['u'], media);
+          expect(request.followRedirects, isFalse);
+          return http.Response.bytes(
+            [0xff, 0xd8, 0xff],
+            found ? 200 : 404,
+            headers: {'content-type': 'image/jpeg'},
+          );
+        }),
+      );
+      const control = 'http://speaker:1400/MediaRenderer/AVTransport/Control';
+      expect(
+        await backend.speakerArtwork(control, media),
+        '/getaa?u=${Uri.encodeQueryComponent(media)}',
+      );
+      found = false;
+      expect(await backend.speakerArtwork(control, media), isNull);
+    },
+  );
+
+  test(
+    'Sonos reports the actual inserted index and can reject an empty insert',
+    () async {
+      var added = 1;
+      final backend = DlnaBackend(
+        client: MockClient((request) async {
+          expect(
+            text(
+              XmlDocument.parse(request.body),
+              'DesiredFirstTrackNumberEnqueued',
+            ),
+            '1',
+          );
+          return http.Response(
+            envelope(
+              '<NumTracksAdded>$added</NumTracksAdded>'
+              '<FirstTrackNumberEnqueued>1</FirstTrackNumberEnqueued>',
+            ),
+            200,
+          );
+        }),
+      );
+      Future<int?> enqueue() => backend.enqueue(
+        'http://speaker/control',
+        'http://phone/track.mp3',
+        '',
+        position: 1,
+      );
+      expect(await enqueue(), 1);
+      added = 0;
+      await expectLater(enqueue(), throwsStateError);
+    },
+  );
+
+  test(
     'Sonos uses the configured UTF-8 room name and the existing renderer ID',
     () async {
       final backend = DlnaBackend(
@@ -166,7 +228,11 @@ void main() {
         (r) async => http.Response(
           envelope(
             r.headers['SOAPAction']!.contains('GetPositionInfo')
-                ? '<Track>3</Track><TrackURI>http://phone/third</TrackURI><RelTime>01:02:03</RelTime><TrackDuration>01:30:00</TrackDuration>'
+                ? '<Track>3</Track><TrackURI>http://phone/third</TrackURI>'
+                      '<TrackMetaData>&lt;DIDL-Lite&gt;&lt;item&gt;'
+                      '&lt;res&gt;http://phone/third.mp3&lt;/res&gt;'
+                      '&lt;/item&gt;&lt;/DIDL-Lite&gt;</TrackMetaData>'
+                      '<RelTime>01:02:03</RelTime><TrackDuration>01:30:00</TrackDuration>'
                 : '<CurrentTransportState>PAUSED_PLAYBACK</CurrentTransportState>',
           ),
           200,
@@ -177,6 +243,7 @@ void main() {
     expect(position!.position.inSeconds, 3723);
     expect(position.track, 3);
     expect(position.uri, 'http://phone/third');
+    expect(position.resourceUri, 'http://phone/third.mp3');
     expect(position.playing, isFalse);
     expect(position.state, 'PAUSED_PLAYBACK');
   });
