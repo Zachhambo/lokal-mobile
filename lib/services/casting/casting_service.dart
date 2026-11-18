@@ -30,6 +30,14 @@ import '../lyrics_service.dart';
 // panel shows the cast target and hardware keys drive it. DLNA targets are
 // additionally published as MediaRouter routes (native DlnaRouteProvider) so
 // One UI / output switchers see a real remote output.
+typedef _DlnaQueueItem = ({
+  Song song,
+  Object? occurrence,
+  String url,
+  String meta,
+  String? artworkUrl,
+});
+
 class CastingService {
   CastingService._() {
     _listenChromecastEvents();
@@ -41,13 +49,13 @@ class CastingService {
   );
 
   final DlnaBackend _dlna = DlnaBackend();
-  final _dlnaItems =
-      <({Song song, int index, String url, String meta, String? artworkUrl})>[];
+  final _dlnaItems = <_DlnaQueueItem>[];
+  Future<void>? _dlnaQueuePreparation;
+  bool _dlnaQueueUncertain = false;
   int _dlnaRevision = 0;
   int _dlnaPollRevision = 0;
   bool _dlnaBusy = false;
   bool _dlnaPollBusy = false;
-  int _dlnaTrackNumber = 1;
   String? _dlnaReceiverUri;
   bool _dlnaWasPlaying = false;
   Duration _dlnaLastPosition = Duration.zero;
@@ -459,6 +467,8 @@ class CastingService {
       if (pos.inSeconds > 3) {
         await ps.seek(pos);
       }
+    } else if (leavingDlna) {
+      ps.isPlayingNotifier.value = false;
     }
     unawaited(ps.refreshNotificationState());
   }
@@ -1351,10 +1361,13 @@ class CastingService {
       _dlnaPollBusy = true;
       final revision = _dlnaRevision;
       final pollRevision = _dlnaPollRevision;
+      final ps = PlayerService();
+      final playbackRevision = ps.playbackRequestRevision;
       bool current() =>
           identical(device, _activeDevice) &&
           revision == _dlnaRevision &&
-          pollRevision == _dlnaPollRevision;
+          pollRevision == _dlnaPollRevision &&
+          playbackRevision == ps.playbackRequestRevision;
       try {
         final info = await _dlna.getPosition(controlUrl);
         if (!current() || _dlnaBusy) return;
@@ -1365,32 +1378,40 @@ class CastingService {
           return;
         }
         _dlnaFailures = 0;
-        if (info.track > 0) _dlnaTrackNumber = info.track;
-        final ps = PlayerService();
-        final entry =
-            device!.isSonos && info.track > 0 && info.track <= _dlnaItems.length
-            ? _dlnaItems[info.track - 1]
+        final entry = device!.isSonos && info.track > 0
+            ? (info.track <= _dlnaItems.length
+                  ? _dlnaItems[info.track - 1]
+                  : null)
             : _dlnaItems.where((e) => e.url == info.uri).firstOrNull;
-        if (entry != null &&
-            entry.url == info.uri &&
-            (entry.index != ps.currentIndex ||
-                entry.song.id != _currentSong?.id)) {
-          _dlnaReceiverUri = entry.url;
-          _currentSong = entry.song;
-          currentCastLoadId = 'dlna:${++_loadRevision}';
-          _completion.loaded(currentCastLoadId!);
-          await ps.followCastPlaylistTrack(
-            entry.index,
-            entry.song.id,
-            position: info.position,
-            playing: info.playing,
-          );
-          if (!current()) return;
-          _dlnaQueueKey = null;
+        if (entry != null && entry.url == info.uri) {
+          final occurrence = entry.occurrence;
+          if (occurrence != null &&
+              (!identical(occurrence, ps.castPlaylistOccurrence(ps.currentIndex)) ||
+                  info.uri != _dlnaReceiverUri)) {
+            final followed = await ps.followCastPlaylistTrack(
+              occurrence,
+              entry.song,
+              stillCurrent: current,
+              position: info.position,
+              playing: info.playing,
+            );
+            if (!current()) return;
+            if (!followed) {
+              errorNotifier.value =
+                  'The receiver advanced to an item that changed in Lokal. Select a track to resync.';
+              return;
+            }
+            _currentSong = ps.currentSongNotifier.value;
+            currentCastLoadId = 'dlna:${++_loadRevision}';
+            _completion.loaded(currentCastLoadId!);
+            _dlnaQueueKey = null;
+          }
         } else if (info.uri.isNotEmpty &&
-            entry == null &&
             (info.state == 'PLAYING' || info.state == 'PAUSED_PLAYBACK')) {
-          errorNotifier.value = 'Playback was changed by another controller. Reconnect to send Lokal’s queue again.';
+          if (!_dlnaQueueUncertain) {
+            errorNotifier.value =
+                'Playback was changed by another controller. Reconnect to send Lokal’s queue again.';
+          }
           return;
         }
         _dlnaReceiverUri = info.uri;
@@ -1451,14 +1472,19 @@ class CastingService {
   void _clearDlnaQueueState() {
     _dlnaRevision++;
     _dlnaItems.clear();
+    _dlnaQueueUncertain = false;
+    _dlnaQueuePreparation = null;
     _dlnaReceiverUri = null;
     _dlnaQueueKey = null;
     _dlnaWasPlaying = false;
     _dlnaFailures = 0;
   }
 
-  Future<({Song song, int index, String url, String meta, String? artworkUrl})>
-  _prepareDlna(Song song, int index, bool Function() current) async {
+  Future<_DlnaQueueItem> _prepareDlna(
+    Song song,
+    Object? occurrence,
+    bool Function() current,
+  ) async {
     final url = await _resolveReceiverCastUrl(
       song,
       current,
@@ -1483,7 +1509,7 @@ class CastingService {
     if (!current()) throw const CastHandoffCancelled();
     return (
       song: song,
-      index: index,
+      occurrence: occurrence,
       url: url,
       artworkUrl: art,
       meta: DlnaBackend.metadata(
@@ -1520,28 +1546,32 @@ class CastingService {
       try {
         final ps = PlayerService();
         final control = device!.controlUrl!;
-        final index = ps.currentIndex;
-        final held = _dlnaItems.indexWhere(
-          (e) => e.index == index && e.song.id == song.id,
-        );
+        final occurrence = ps.castPlaylistOccurrence(ps.currentIndex);
+        final held = _dlnaQueueUncertain
+            ? -1
+            : _dlnaItems.indexWhere(
+                (e) => identical(e.occurrence, occurrence) &&
+                    e.song.id == song.id &&
+                    !shouldReplaceQueuedAudioSource(e.song, song),
+              );
         final item = held >= 0
             ? _dlnaItems[held]
-            : await _prepareDlna(song, index, current);
+            : await _prepareDlna(song, occurrence, current);
         if (!current()) return;
         onReceiverTouched?.call();
         if (device.isSonos && held >= 0) {
           await _dlna.seekTrack(control, held + 1);
-          _dlnaTrackNumber = held + 1;
         } else if (device.isSonos) {
           await _dlna.stop(control);
           if (!current()) return;
+          _dlnaQueueUncertain = true;
           await _dlna.clearQueue(control);
           _dlnaItems.clear();
           await _dlna.enqueue(control, item.url, item.meta);
           _dlnaItems.add(item);
           await _dlna.queueSource(device);
           await _dlna.seekTrack(control, 1);
-          _dlnaTrackNumber = 1;
+          _dlnaQueueUncertain = false;
         } else {
           await _dlna.setMetadataUri(control, item.url, item.meta);
           _dlnaItems
@@ -1576,20 +1606,28 @@ class CastingService {
         _syncPreparationState();
         unawaited(PlayerService().refreshNotificationState());
       }
-      if (!prepareAhead) return;
-      try {
-        await _syncDlnaQueue(revision);
-      } catch (error) {
-        if (revision == _dlnaRevision)
-          errorNotifier.value =
-              'Playing this track, but the receiver queue could not be prepared: $error';
+      if (prepareAhead && current()) {
+        unawaited(_refreshDlnaQueue().catchError((Object error) {
+          if (current()) {
+            errorNotifier.value =
+                'Could not prepare the receiver queue: $error';
+          }
+        }));
       }
     });
   }
 
   Future<void> _refreshDlnaQueue() {
+    if (_dlnaQueuePreparation case final pending?) return pending;
+    if (_dlnaQueueUncertain) return Future.value();
     final revision = _dlnaRevision;
-    return _serializeDlna(() => _syncDlnaQueue(revision));
+    final preparation = _syncDlnaQueue(revision);
+    _dlnaQueuePreparation = preparation;
+    return preparation.whenComplete(() {
+      if (identical(_dlnaQueuePreparation, preparation)) {
+        _dlnaQueuePreparation = null;
+      }
+    });
   }
 
   Future<void> _syncDlnaQueue(int revision) async {
@@ -1601,13 +1639,18 @@ class CastingService {
         revision == _dlnaRevision;
     if (!current() || _currentSong == null) return;
     final playlist = ps.playlist;
+    final currentIndex = ps.currentIndex;
+    final currentOccurrence = ps.castPlaylistOccurrence(currentIndex);
+    final initialUri = _dlnaReceiverUri;
     final mode = ps.loopModeNotifier.value.name;
+    final shuffle = ps.shuffleModeNotifier.value;
+    final playbackRevision = ps.playbackRequestRevision;
     final repeatOne = mode == 'one';
     final indices = <int>[];
     if (playlist.isNotEmpty &&
         !repeatOne &&
         mode != 'stopAfterCurrent' &&
-        ps.shuffleModeNotifier.value.name != 'random') {
+        shuffle.name != 'random') {
       for (var n = 1; n <= (device!.isSonos ? 4 : 1); n++) {
         var index = ps.currentIndex + n;
         if (index >= playlist.length) {
@@ -1619,96 +1662,131 @@ class CastingService {
         indices.add(index);
       }
     }
-    final key =
-        '${ps.currentIndex}|$mode|${indices.map((i) => '$i:${playlist[i].id}:${playlist[i].filePath}').join('|')}';
+    final upcoming = [
+      for (final index in indices)
+        (index: index, occurrence: ps.castPlaylistOccurrence(index), song: playlist[index]),
+    ];
+    final key = '$currentIndex|$mode|${shuffle.name}|${upcoming.map((entry) {
+      final song = entry.song;
+      return '${identityHashCode(entry.occurrence)}:${song.id}:${song.filePath}:${song.fileType}:${song.atmosEncoded}';
+    }).join('|')}';
     if (key == _dlnaQueueKey) return;
-    _dlnaPollRevision++;
-    _dlnaBusy = true;
+
+    bool stillWanted() =>
+        current() &&
+        !_dlnaQueueUncertain &&
+        initialUri == _dlnaReceiverUri &&
+        playbackRevision == ps.playbackRequestRevision &&
+        ps.currentIndex == currentIndex &&
+        identical(ps.castPlaylistOccurrence(currentIndex), currentOccurrence) &&
+        ps.loopModeNotifier.value.name == mode &&
+        ps.shuffleModeNotifier.value == shuffle &&
+        upcoming.every((entry) {
+          final song = ps.castPlaylistSongAt(entry.index);
+          return song != null &&
+              identical(ps.castPlaylistOccurrence(entry.index), entry.occurrence) &&
+              song.id == entry.song.id &&
+              !shouldReplaceQueuedAudioSource(song, entry.song);
+        });
+
+    final ready = <_DlnaQueueItem>[];
     try {
-      final control = device!.controlUrl!;
-      if (device.isSonos) await _dlna.playMode(control, repeatOne: repeatOne);
-      final ready =
-          <
-            ({
-              Song song,
-              int index,
-              String url,
-              String meta,
-              String? artworkUrl,
-            })
-          >[];
-      for (final index in indices) {
-        final held = _dlnaItems
-            .where((e) => e.index == index && e.song.id == playlist[index].id)
-            .firstOrNull;
-        final item =
-            held ?? await _prepareDlna(playlist[index], index, current);
-        if (!current()) return;
+      for (final entry in upcoming) {
+        final held = _dlnaItems.where((item) =>
+            identical(item.occurrence, entry.occurrence) &&
+            item.song.id == entry.song.id &&
+            !shouldReplaceQueuedAudioSource(item.song, entry.song)).firstOrNull;
+        final item = held ??
+            await _prepareDlna(entry.song, entry.occurrence, stillWanted);
+        if (!stillWanted()) return;
         ready.add(item);
       }
-      if (device.isSonos) {
-        var here = _dlnaTrackNumber - 1;
-        if (here < 0 ||
-            here >= _dlnaItems.length ||
-            _dlnaItems[here].url != _dlnaReceiverUri ||
-            _dlnaItems[here].index != ps.currentIndex)
-          return;
-        if (here < 0) return;
-        if (here > 0) {
-          await _dlna.removeQueueTail(control, 1, here);
-          _dlnaItems.removeRange(0, here);
-          _dlnaTrackNumber = 1;
-          here = 0;
-        }
-        var kept = 0;
-        final ahead = _dlnaItems.sublist(here + 1);
-        while (kept < ahead.length &&
-            kept < ready.length &&
-            ahead[kept].url == ready[kept].url &&
-            ahead[kept].index == ready[kept].index) {
-          kept++;
-        }
-        if (ahead.length > kept) {
-          await _dlna.removeQueueTail(
-            control,
-            here + kept + 2,
-            ahead.length - kept,
-          );
-          _dlnaItems.removeRange(here + kept + 1, _dlnaItems.length);
-        }
-        for (final item in ready.skip(kept)) {
-          if (!current()) return;
-          await _dlna.enqueue(control, item.url, item.meta);
-          _dlnaItems.add(item);
-        }
-      } else {
-        var next = repeatOne ? _dlnaItems.firstOrNull : ready.firstOrNull;
-        // Generic SetNext has no occurrence id. Identical adjacent URLs
-        // advance through confirmed completion instead of becoming a loop.
-        if (!repeatOne && next?.url == _dlnaReceiverUri) next = null;
-        try {
-          await _dlna.nextUri(control, next?.url ?? '', next?.meta ?? '');
-          final playing = _dlnaItems
-              .where((e) => e.url == _dlnaReceiverUri)
-              .firstOrNull;
-          _dlnaItems
-            ..clear()
-            ..addAll([if (playing != null) playing, if (next != null) next]);
-        } catch (_) {
-          // SetNext is optional. Completion polling advances Lokal's queue.
-        }
-      }
-      if (current()) {
-        _dlnaQueueKey = key;
-        CastContentServer.instance.retainUrls([
-          for (final item in _dlnaItems) ...[
-            item.url,
-            if (item.artworkUrl != null) item.artworkUrl!,
-          ],
-        ]);
-      }
-    } finally {
-      _dlnaBusy = false;
+    } on CastHandoffCancelled {
+      return;
     }
+
+    await _serializeDlna(() async {
+      if (!stillWanted()) return;
+      _dlnaPollRevision++;
+      _dlnaBusy = true;
+      try {
+        final control = device!.controlUrl!;
+        if (device.isSonos) {
+          final position = await _dlna.getPosition(control);
+          if (position == null || !stillWanted()) return;
+          var here = position.track - 1;
+          if (here < 0 ||
+              here >= _dlnaItems.length ||
+              _dlnaItems[here].url != position.uri ||
+              !identical(_dlnaItems[here].occurrence, currentOccurrence)) {
+            return;
+          }
+          await _dlna.playMode(control, repeatOne: repeatOne);
+          if (!stillWanted()) return;
+          _dlnaQueueUncertain = true;
+          if (here > 0) {
+            await _dlna.removeQueueTail(control, 1, here);
+            _dlnaItems.removeRange(0, here);
+            here = 0;
+          }
+          var kept = 0;
+          final ahead = _dlnaItems.sublist(here + 1);
+          while (kept < ahead.length &&
+              kept < ready.length &&
+              ahead[kept].url == ready[kept].url &&
+              identical(ahead[kept].occurrence, ready[kept].occurrence)) {
+            kept++;
+          }
+          if (ahead.length > kept) {
+            await _dlna.removeQueueTail(
+              control,
+              here + kept + 2,
+              ahead.length - kept,
+            );
+            _dlnaItems.removeRange(here + kept + 1, _dlnaItems.length);
+          }
+          for (final item in ready.skip(kept)) {
+            if (!current()) break;
+            await _dlna.enqueue(control, item.url, item.meta);
+            _dlnaItems.add(item);
+          }
+          _dlnaQueueUncertain = false;
+        } else {
+          var next = repeatOne ? _dlnaItems.firstOrNull : ready.firstOrNull;
+          // Generic SetNext has no occurrence id. Identical adjacent URLs
+          // advance through confirmed completion instead of becoming a loop.
+          if (!repeatOne && next?.url == _dlnaReceiverUri) next = null;
+          try {
+            await _dlna.nextUri(control, next?.url ?? '', next?.meta ?? '');
+            final playing = _dlnaItems
+                .where((e) => e.url == _dlnaReceiverUri)
+                .firstOrNull;
+            _dlnaItems
+              ..clear()
+              ..addAll([if (playing != null) playing, if (next != null) next]);
+          } catch (_) {
+            // SetNext is optional. Completion polling advances Lokal's queue.
+          }
+        }
+        if (stillWanted()) {
+          _dlnaQueueKey = key;
+          CastContentServer.instance.retainUrls([
+            for (final item in _dlnaItems) ...[
+              item.url,
+              if (item.artworkUrl != null) item.artworkUrl!,
+            ],
+          ]);
+        }
+      } catch (_) {
+        if (_dlnaQueueUncertain && current()) {
+          errorNotifier.value =
+              'The receiver queue could not be confirmed. Select a track to rebuild it.';
+          return;
+        }
+        rethrow;
+      } finally {
+        _dlnaBusy = false;
+      }
+    });
   }
 }
