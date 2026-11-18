@@ -2,6 +2,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flick/services/casting/cast_source.dart';
 
 void main() {
+  test(
+    'online relay filenames preserve the media type and omit provider URLs',
+    () {
+      expect(
+        castProgressiveFilename(
+          Uri.parse('https://music.example/signed.webm?token=fixture'),
+          'OPUS',
+        ),
+        'track.webm',
+      );
+      expect(
+        castProgressiveFilename(
+          Uri.parse('https://music.example/track/123'),
+          'FLAC',
+        ),
+        'track.flac',
+      );
+    },
+  );
+
   test('only receiver-accessible HTTP sources bypass the phone server', () {
     expect(
       receiverDirectUrl('https://music.example/audio?token=fixture'),

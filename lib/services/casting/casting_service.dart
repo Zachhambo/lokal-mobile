@@ -5,6 +5,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../../features/discovery/discovery_progressive_streams.dart';
+import '../../features/morneye/morneye_live_playback.dart';
 import '../../models/song.dart';
 import '../player_service.dart';
 import '../remote_source_service.dart';
@@ -1290,6 +1292,26 @@ class CastingService {
     Song song,
     bool Function() current,
   ) async {
+    if (song.sourcePackage == 'konnekted.progressive') {
+      final upstream = DiscoveryProgressiveStreams.instance.resolve(song.filePath);
+      if (upstream == null) return null;
+      return CastContentServer.instance.relayOnline(
+        upstream,
+        filename: castProgressiveFilename(upstream, song.fileType),
+        stillCurrent: current,
+      );
+    }
+    if (song.sourcePackage == 'konnekted.morneye-live') {
+      final session = MorneyeLiveRegistry.instance.resolve(song.filePath);
+      if (session == null) return null;
+      final path = await session.completeFile.timeout(const Duration(seconds: 45));
+      if (!current()) throw const CastHandoffCancelled();
+      return CastContentServer.instance.serve(
+        path,
+        filename: castProgressiveFilename(Uri.file(path), song.fileType),
+        stillCurrent: current,
+      );
+    }
     final resolved = await RemoteSourceService.instance.resolveHttpPlayback(
       song,
     );
@@ -1482,16 +1504,22 @@ class CastingService {
     Object? occurrence,
     bool Function() current,
   ) async {
+    final online =
+        const {
+          'konnekted.progressive',
+          'konnekted.morneye-live',
+          'konnekted.discovery',
+        }.contains(song.sourcePackage);
     final url = await _resolveReceiverCastUrl(
       song,
       current,
-    ).timeout(const Duration(seconds: 20));
+    ).timeout(Duration(seconds: online ? 45 : 20));
     if (!current()) throw const CastHandoffCancelled();
     if (url == null)
       throw StateError('This track cannot be sent to the receiver.');
-    // iOS has no supported background execution mode for serving arbitrary
-    // LAN HTTP audio. Use its native AirPlay route for phone-hosted sources.
-    if (Platform.isIOS && CastContentServer.instance.ownsUrl(url)) {
+    // Online playback relays work in the foreground. Keep ordinary files on
+    // the native AirPlay path on iOS if they require this device to host them.
+    if (Platform.isIOS && !online && CastContentServer.instance.ownsUrl(url)) {
       throw StateError(
         'Use AirPlay for phone-hosted tracks on iPhone/iPad so playback can continue with the screen locked.',
       );

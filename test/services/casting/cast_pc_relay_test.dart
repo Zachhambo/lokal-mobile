@@ -12,6 +12,41 @@ void main() {
   Future<List<int>> bytes(HttpClientResponse response) =>
       response.fold<List<int>>([], (all, chunk) => all..addAll(chunk));
 
+  test(
+    'progressive streams publish opaque receiver URLs and require HTTPS',
+    () async {
+      await binding.runAsync(() async {
+        final relay = CastContentServer.instance;
+        try {
+          expect(
+            () => relay.relayOnline(
+              Uri.parse('http://music.example/track.flac'),
+              filename: 'track.flac',
+            ),
+            throwsArgumentError,
+          );
+          final source = Uri.parse(
+            'https://music.example/track.flac?signature=private-fixture',
+          );
+          final url = await relay.relayOnline(source, filename: 'track.flac');
+          expect(relay.ownsUrl(url), isTrue);
+          expect(Uri.parse(url).pathSegments.last, 'track.flac');
+          expect(url, isNot(contains('private-fixture')));
+          await expectLater(
+            relay.relayOnline(
+              source,
+              filename: 'track.flac',
+              stillCurrent: () => false,
+            ),
+            throwsStateError,
+          );
+        } finally {
+          await relay.stop();
+        }
+      });
+    },
+  );
+
   test('PC relay is ready before a full download, preserves ranges and keeps credentials private', () async {
     await binding.runAsync(() async {
       final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

@@ -85,9 +85,14 @@ receiver URLs. Actual URL container metadata takes precedence over catalog forma
 when selecting MIME type. Receiver codec/protocol support remains authoritative;
 this adapter does not transcode unsupported files or promise every add-on stream.
 
+Online discovery tracks can also play on Google Cast and UPnP receivers.
+Progressive streams use a phone-hosted relay so signed provider URLs stay on
+the phone. Growing add-on downloads use the verified cache after completion.
+
 iOS may suspend the app-owned HTTP server when the phone leaves the foreground.
-The receiver screen explicitly asks users to keep Lokal open for phone-hosted
-files. Network-hosted receiver-accessible tracks do not require that phone server.
+The receiver screen asks users to keep Lokal open for online tracks relayed
+through the phone. Network-hosted receiver-accessible tracks do not require
+that phone server.
 Do not claim background local-file Cast parity. A durable desktop/server offload
 would need a separate explicit transfer, receiver-accessible authorization and
 device qualification. Silent audio is not used to keep the server alive.

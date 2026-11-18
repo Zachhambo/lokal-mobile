@@ -239,7 +239,7 @@ class _CastingSettingsScreenState extends ConsumerState<CastingSettingsScreen> {
             children: [
               LokalSettingRow(
                 label: 'Casting files from iPhone',
-                description: 'Use AirPlay for Sonos and other compatible speakers when playing files stored on this iPhone/iPad. UPnP network-hosted tracks can play directly; automatic queue updates require Lokal to remain active.',
+                description: 'Use AirPlay for files stored on this iPhone or iPad. Keep Lokal open when casting online songs that stream through this device or while Lokal updates the receiver queue.',
                 icon: LucideIcons.info,
                 enabled: false,
               ),
