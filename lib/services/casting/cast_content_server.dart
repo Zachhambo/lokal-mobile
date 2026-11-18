@@ -18,6 +18,7 @@ class CastContentServer {
   HttpServer? _server;
   int _epoch = 0;
   final Map<String, String> _paths = {};
+  final Map<String, Uint8List> _artwork = {};
   final Map<String, ({Uri uri, Map<String, String> headers})> _relays = {};
   final Set<HttpClient> _clients = {};
   final Map<String, ContentType> _types = {};
@@ -36,7 +37,9 @@ class CastContentServer {
     if (_server == null || uri == null || uri.port != _server!.port)
       return false;
     final token = uri.pathSegments.firstOrNull;
-    return _paths.containsKey(token) || _relays.containsKey(token);
+    return _paths.containsKey(token) ||
+        _artwork.containsKey(token) ||
+        _relays.containsKey(token);
   }
 
   /// Retain only the receiver's current queue window, including its covers.
@@ -47,6 +50,7 @@ class CastContentServer {
         if (ownsUrl(url)) Uri.parse(url).pathSegments.first,
     };
     _paths.removeWhere((token, _) => !tokens.contains(token));
+    _artwork.removeWhere((token, _) => !tokens.contains(token));
     _relays.removeWhere((token, _) => !tokens.contains(token));
     _types.removeWhere((token, _) => !tokens.contains(token));
     if (Platform.isAndroid) syncStagingProtection().catchError((Object _) {});
@@ -64,6 +68,14 @@ class CastContentServer {
     contentType: contentType,
     stillCurrent: stillCurrent,
   );
+
+  Future<String> serveJpeg(Uint8List bytes, {bool Function()? stillCurrent}) =>
+      _publish(
+        filename: 'cover.jpg',
+        artwork: bytes,
+        contentType: ContentType('image', 'jpeg'),
+        stillCurrent: stillCurrent,
+      );
 
   /// A receiver gets an opaque LAN URL. PC credentials stay on this phone;
   /// Range requests stream immediately instead of downloading the entire song.
@@ -89,6 +101,7 @@ class CastContentServer {
   Future<String> _publish({
     required String filename,
     String? filePath,
+    Uint8List? artwork,
     ({Uri uri, Map<String, String> headers})? remote,
     ContentType? contentType,
     bool Function()? stillCurrent,
@@ -119,6 +132,7 @@ class CastContentServer {
     if (!current()) throw StateError('Cast source was cancelled.');
     final token = _token();
     if (filePath != null) _paths[token] = filePath;
+    if (artwork != null) _artwork[token] = artwork;
     if (remote != null) _relays[token] = remote;
     if (contentType != null) _types[token] = contentType;
     await syncStagingProtection();
@@ -132,6 +146,7 @@ class CastContentServer {
   Future<void> stop() async {
     ++_epoch;
     _paths.clear();
+    _artwork.clear();
     _relays.clear();
     for (final client in _clients.toList()) {
       client.close(force: true);
@@ -197,8 +212,9 @@ class CastContentServer {
         ? req.uri.pathSegments.first
         : '';
     final path = _paths[token];
+    final artwork = _artwork[token];
     final remote = _relays[token];
-    if (path == null && remote == null) {
+    if (path == null && artwork == null && remote == null) {
       req.response.statusCode = HttpStatus.notFound;
       await req.response.close();
       return;
@@ -228,13 +244,13 @@ class CastContentServer {
       await _relay(req, remote);
       return;
     }
-    final file = File(path!);
-    if (!await file.exists()) {
+    final file = path == null ? null : File(path);
+    if (file != null && !await file.exists()) {
       req.response.statusCode = HttpStatus.notFound;
       await req.response.close();
       return;
     }
-    final total = await file.length();
+    final total = artwork?.length ?? await file!.length();
     // Range only applies to GET. Ignore unsupported/malformed/multipart ranges
     // rather than returning a partial body with incorrect framing (RFC 9110).
     final range = head ? null : req.headers.value(HttpHeaders.rangeHeader);
@@ -282,7 +298,7 @@ class CastContentServer {
 
     final length = end - start + 1;
     req.response.statusCode = status;
-    req.response.headers.contentType = _types[token] ?? _contentTypeFor(path);
+    req.response.headers.contentType = _types[token] ?? _contentTypeFor(path!);
     req.response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
     req.response.headers.set(HttpHeaders.contentLengthHeader, '$length');
     if (status == HttpStatus.partialContent) {
@@ -297,9 +313,15 @@ class CastContentServer {
       return;
     }
 
+    if (artwork != null) {
+      req.response.add(Uint8List.sublistView(artwork, start, end + 1));
+      await req.response.close();
+      return;
+    }
+
     // ponytail: chunked manual copy; StreamedResponse plumbing adds nothing
     // for a LAN-local single consumer.
-    final raf = await file.open();
+    final raf = await file!.open();
     try {
       await raf.setPosition(start);
       var remaining = length;

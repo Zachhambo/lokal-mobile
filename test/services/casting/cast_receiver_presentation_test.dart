@@ -1,15 +1,55 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flick/models/song.dart';
 import 'package:flick/services/casting/cast_content_server.dart';
 import 'package:flick/services/casting/cast_receiver_presentation.dart';
 import 'package:flick/services/lyrics_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
+  test('UPnP cover URLs serve JPEG bytes and follow queue retention', () async {
+    await binding.runAsync(() async {
+      final directory = await Directory.systemTemp.createTemp('cast-cover-');
+      final client = HttpClient();
+      final server = CastContentServer.instance;
+      try {
+        final file = await File('${directory.path}/cover with spaces')
+            .writeAsBytes(img.encodePng(img.Image(width: 8, height: 8)));
+        final song = Song(
+          id: 'cover',
+          title: 'Track',
+          artist: 'Fixture',
+          duration: Duration.zero,
+          fileType: 'flac',
+          albumArt: file.uri.toString(),
+        );
+        final url = (await castArtwork(song, preferJpeg: true))!;
+        expect(url, endsWith('/cover.jpg'));
+        server.retainUrls([url]);
+        final local = Uri.parse(url).replace(host: '127.0.0.1');
+        final response = await (await client.getUrl(local)).close();
+        expect(response.headers.contentType?.mimeType, 'image/jpeg');
+        final bytes = await response.fold<List<int>>(
+          [],
+          (all, chunk) => all..addAll(chunk),
+        );
+        expect(img.decodeJpg(Uint8List.fromList(bytes))?.width, 8);
+        server.retainUrls([]);
+        final removed = await (await client.getUrl(local)).close();
+        expect(removed.statusCode, HttpStatus.notFound);
+        await removed.drain<void>();
+      } finally {
+        client.close(force: true);
+        await server.stop();
+        await directory.delete(recursive: true);
+      }
+    });
+  });
   for (final bmp in [false, true])
     test(
       'cached ${bmp ? 'BMP' : 'PNG'} artwork with an opaque filename is served as its real image type',

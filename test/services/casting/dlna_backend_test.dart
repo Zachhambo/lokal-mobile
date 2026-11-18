@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:test/test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -10,6 +12,34 @@ String envelope(String body) =>
 String text(XmlDocument doc, String name) =>
     doc.findAllElements(name, namespaceUri: '*').first.innerText;
 void main() {
+  test(
+    'Sonos uses the configured UTF-8 room name and the existing renderer ID',
+    () async {
+      final backend = DlnaBackend(
+        client: MockClient(
+          (_) async => http.Response.bytes(
+            utf8.encode(
+              '<root xmlns="urn:schemas-upnp-org:device-1-0"><device>'
+              '<manufacturer>Sonos</manufacturer><UDN>uuid:RINCON_1</UDN>'
+              '<friendlyName>192.168.1.20 - Sonos One</friendlyName>'
+              '<roomName> Séjour &amp; Cuisine </roomName><deviceList><device><serviceList>'
+              '<service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>'
+              '<controlURL>/av</controlURL></service>'
+              '</serviceList></device></deviceList></device></root>',
+            ),
+            200,
+            headers: {'content-type': 'text/xml'},
+          ),
+        ),
+      );
+      final device = await backend.resolve(
+        'http://192.168.1.20:1400/description.xml',
+      );
+      expect(device?.name, 'Séjour & Cuisine');
+      expect(device?.id, 'uuid:RINCON_1');
+      expect(device?.controlUrl, 'http://192.168.1.20:1400/av');
+    },
+  );
   test('grouped room targets its coordinator while keeping the selected room identity', () async {
     final topology =
         '<ZoneGroups><ZoneGroup Coordinator="MASTER"><ZoneGroupMember UUID="MEMBER" Location="http://member/device.xml"/><ZoneGroupMember UUID="MASTER" Location="http://master/device.xml"/></ZoneGroup></ZoneGroups>';

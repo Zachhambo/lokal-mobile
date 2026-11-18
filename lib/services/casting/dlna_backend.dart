@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
@@ -87,7 +88,9 @@ class DlnaBackend {
       final res = await _get(Uri.parse(locationUrl))
           .timeout(const Duration(seconds: 3));
       if (res.statusCode != 200) return null;
-      final doc = xml.XmlDocument.parse(res.body);
+      final doc = xml.XmlDocument.parse(
+        utf8.decode(res.bodyBytes, allowMalformed: true),
+      );
       final friendlyName =
           doc
               .findAllElements('friendlyName', namespaceUri: '*')
@@ -113,6 +116,15 @@ class DlnaBackend {
       );
       final isSonos =
           manufacturer.toLowerCase().contains('sonos') || topology != null;
+      final roomName = isSonos
+          ? doc.rootElement
+                .findElements('device', namespaceUri: '*')
+                .firstOrNull
+                ?.findElements('roomName', namespaceUri: '*')
+                .firstOrNull
+                ?.innerText
+                .trim()
+          : null;
       String? controlUrl = _findServiceControlUrl(
         doc,
         locationUrl,
@@ -121,7 +133,7 @@ class DlnaBackend {
       if (controlUrl == null) return null;
       return CastDevice(
         id: udn,
-        name: friendlyName,
+        name: roomName != null && roomName.isNotEmpty ? roomName : friendlyName,
         backend: CastBackend.dlna,
         locationUrl: locationUrl,
         controlUrl: controlUrl,
