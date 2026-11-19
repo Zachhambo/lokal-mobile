@@ -162,111 +162,127 @@ class _QueueListState extends ConsumerState<QueueList> {
     final h = widget.embedded ? 14.0 : 20.0;
     final count = songs.length + autoplay.length;
 
+    final compactHeader = widget.embedded && !widget.themed;
+    final actionColor = compactHeader ? textColor : mutedColor;
+    final title = lokalText('Queue');
+    final titleStyle = TextStyle(
+      fontSize: compactHeader ? 18 : 23,
+      fontWeight: FontWeight.w700,
+      color: textColor,
+      letterSpacing: -.45,
+    );
+    final status = _selectionMode
+        ? lokalText('{arg0} selected', args: {'arg0': _selected.length})
+        : l10n.upcomingSong(count);
+    final statusStyle = TextStyle(
+      fontSize: 12.5,
+      color: compactHeader ? textColor.withValues(alpha: .8) : mutedColor,
+    );
+    final actions = <Widget>[
+      if (_selectionMode) ...[
+        IconButton(
+          tooltip: l10n.selectAll,
+          onPressed: () => setState(
+            () => _selected
+              ..clear()
+              ..addAll(ids),
+          ),
+          icon: Icon(LucideIcons.checkCheck, size: 20, color: actionColor),
+        ),
+        IconButton(
+          key: const ValueKey('queue-remove-selected'),
+          tooltip: l10n.removeSelected,
+          onPressed: _selected.isEmpty
+              ? null
+              : () => _removeSelection(manualOnly, songs),
+          icon: const Icon(LucideIcons.trash2, size: 20),
+        ),
+        IconButton(
+          tooltip: lokalText('Cancel'),
+          onPressed: () => setState(() {
+            _selectionMode = false;
+            _selected.clear();
+          }),
+          icon: Icon(LucideIcons.x, size: 20, color: actionColor),
+        ),
+      ] else if (songs.isNotEmpty) ...[
+        IconButton(
+          tooltip: l10n.selectAll,
+          onPressed: () => setState(() => _selectionMode = true),
+          icon: Icon(LucideIcons.checkCheck, size: 20, color: actionColor),
+        ),
+        IconButton(
+          key: const ValueKey('queue-clear-upcoming'),
+          tooltip: l10n.clearAll,
+          onPressed: () async {
+            final player = ref.read(playerProvider.notifier);
+            if (manualOnly) {
+              await player.clearQueue();
+            } else {
+              await player.clearAllUpcoming();
+            }
+          },
+          icon: Icon(LucideIcons.listX, size: 20, color: actionColor),
+        ),
+      ],
+    ];
+
     final header = Padding(
-      padding: EdgeInsets.fromLTRB(h, widget.sheet ? 4 : 16, h, 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              if (!widget.embedded &&
-                  !widget.sheet &&
-                  Navigator.of(context).canPop())
-                BackButton(color: textColor),
-              Expanded(
-                child: Text(
-                  lokalText('Queue'),
-                  style: TextStyle(
-                    fontSize: 23,
-                    fontWeight: FontWeight.w700,
-                    color: textColor,
-                    letterSpacing: -.45,
+      padding: EdgeInsets.fromLTRB(
+        h,
+        compactHeader || widget.sheet ? 4 : 16,
+        h,
+        compactHeader ? 4 : 14,
+      ),
+      child: compactHeader
+          ? Row(
+              children: [
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(
+                      text: title,
+                      style: titleStyle,
+                      children: [
+                        TextSpan(
+                          text: ' · $status',
+                          style: statusStyle.copyWith(
+                            fontWeight: FontWeight.w400,
+                            letterSpacing: 0,
+                          ),
+                        ),
+                      ],
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-              ),
-            ],
-          ),
-          Wrap(
-            spacing: 12,
-            runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Text(
-                _selectionMode
-                    ? lokalText(
-                        '{arg0} selected',
-                        args: {'arg0': _selected.length},
-                      )
-                    : l10n.upcomingSong(count),
-                style: TextStyle(fontSize: 12.5, color: mutedColor),
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_selectionMode) ...[
-                    IconButton(
-                      tooltip: l10n.selectAll,
-                      onPressed: () => setState(
-                        () => _selected
-                          ..clear()
-                          ..addAll(ids),
-                      ),
-                      icon: Icon(
-                        LucideIcons.checkCheck,
-                        size: 20,
-                        color: mutedColor,
-                      ),
-                    ),
-                    IconButton(
-                      key: const ValueKey('queue-remove-selected'),
-                      tooltip: l10n.removeSelected,
-                      onPressed: _selected.isEmpty
-                          ? null
-                          : () => _removeSelection(manualOnly, songs),
-                      icon: const Icon(LucideIcons.trash2, size: 20),
-                    ),
-                    IconButton(
-                      tooltip: lokalText('Cancel'),
-                      onPressed: () => setState(() {
-                        _selectionMode = false;
-                        _selected.clear();
-                      }),
-                      icon: Icon(LucideIcons.x, size: 20, color: mutedColor),
-                    ),
-                  ] else if (songs.isNotEmpty) ...[
-                    IconButton(
-                      tooltip: l10n.selectAll,
-                      onPressed: () => setState(() => _selectionMode = true),
-                      icon: Icon(
-                        LucideIcons.checkCheck,
-                        size: 20,
-                        color: mutedColor,
-                      ),
-                    ),
-                    IconButton(
-                      key: const ValueKey('queue-clear-upcoming'),
-                      tooltip: l10n.clearAll,
-                      onPressed: () async {
-                        final player = ref.read(playerProvider.notifier);
-                        if (manualOnly) {
-                          await player.clearQueue();
-                        } else {
-                          await player.clearAllUpcoming();
-                        }
-                      },
-                      icon: Icon(
-                        LucideIcons.listX,
-                        size: 20,
-                        color: mutedColor,
-                      ),
-                    ),
+                const SizedBox(width: 8),
+                ...actions,
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    if (!widget.embedded &&
+                        !widget.sheet &&
+                        Navigator.of(context).canPop())
+                      BackButton(color: textColor),
+                    Expanded(child: Text(title, style: titleStyle)),
                   ],
-                ],
-              ),
-            ],
-          ),
-        ],
-      ),
+                ),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(status, style: statusStyle),
+                    Row(mainAxisSize: MainAxisSize.min, children: actions),
+                  ],
+                ),
+              ],
+            ),
     );
 
     final body = Column(
@@ -327,36 +343,37 @@ class _QueueListState extends ConsumerState<QueueList> {
                   ),
               ],
               if (songs.isNotEmpty) ...[
-                SliverPadding(
-                  padding: EdgeInsets.fromLTRB(h, 5, h, 5),
-                  sliver: SliverToBoxAdapter(
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Text(
-                          l10n.upNext,
-                          style: TextStyle(
-                            color: mutedColor,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                        Text(
-                          '${songs.length}',
-                          style: TextStyle(fontSize: 12, color: mutedColor),
-                        ),
-                        if (!_selectionMode)
+                if (!compactHeader)
+                  SliverPadding(
+                    padding: EdgeInsets.fromLTRB(h, 5, h, 5),
+                    sliver: SliverToBoxAdapter(
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
                           Text(
-                            lokalText('Hold to reorder'),
-                            style: TextStyle(fontSize: 11, color: mutedColor),
+                            l10n.upNext,
+                            style: TextStyle(
+                              color: mutedColor,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                              letterSpacing: 1.2,
+                            ),
                           ),
-                      ],
+                          Text(
+                            '${songs.length}',
+                            style: TextStyle(fontSize: 12, color: mutedColor),
+                          ),
+                          if (!_selectionMode)
+                            Text(
+                              lokalText('Hold to reorder'),
+                              style: TextStyle(fontSize: 11, color: mutedColor),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
                 SliverPadding(
                   padding: EdgeInsets.fromLTRB(
                     h,
