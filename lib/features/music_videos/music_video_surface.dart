@@ -1,3 +1,5 @@
+import '../../services/link/copied_track_clip.dart';
+
 import 'dart:async';
 import 'dart:io';
 
@@ -38,6 +40,7 @@ String musicVideoEmbedHtml(
   bool deferAutoplayToHost = false,
   bool startPaused = false,
   Duration initialPosition = Duration.zero,
+  CopiedTrackClip? clip,
 }) {
   if (!validMusicVideoId(videoId)) {
     throw ArgumentError.value(videoId, 'videoId', 'Invalid YouTube video ID');
@@ -47,6 +50,7 @@ String musicVideoEmbedHtml(
     'playsinline': '1',
     'rel': '0',
     'enablejsapi': '1',
+    if (clip != null) 'controls': '0',
     'origin': appId == null
         ? musicVideoAppOrigin
         : musicVideoOriginForAppId(appId),
@@ -69,6 +73,37 @@ let lokalClock = null;
 const lokalStartPaused = $startPaused;
 const lokalHostAutoplay = $deferAutoplayToHost;
 const lokalInitialSeconds = ${initialPosition.inMilliseconds < 0 ? 0 : initialPosition.inMilliseconds / 1000};
+const lokalClip = ${clip == null ? 'false' : 'true'};
+const lokalClipStart = ${clip?.start ?? 'null'};
+const lokalClipEnd = ${clip?.end ?? 'null'};
+let lokalClipInitialized = false;
+function lokalLoopClip() {
+  if (!lokalClip || !lokalReady || lokalReleased) return;
+  const duration = lokalPlayer.getDuration();
+  if (!(duration > 0)) return;
+  let from = lokalClipStart;
+  let to = lokalClipEnd;
+  if (from !== null && from >= duration) {
+    from = Math.max(0, duration - 10);
+    to = duration;
+  } else if (from !== null) {
+    to = to !== null && to > from ? Math.min(to, duration) : Math.min(from + 10, duration);
+  } else if (to > 0) {
+    to = Math.min(to, duration);
+    from = Math.max(0, to - 10);
+  } else {
+    from = duration / 3;
+    to = duration * 2 / 3;
+  }
+  const state = lokalPlayer.getPlayerState();
+  if (state !== 1 && state !== 0) return;
+  const position = lokalPlayer.getCurrentTime();
+  if (!lokalClipInitialized || position < from - 0.25 || position >= to || state === 0) {
+    lokalClipInitialized = true;
+    lokalPlayer.seekTo(from, true);
+    if (state === 0) lokalPlayer.playVideo();
+  }
+}
 function lokalSnapshot(error) {
   if (!window.flutter_inappwebview) return;
   try {
@@ -112,16 +147,19 @@ window.onYouTubeIframeAPIReady = function() {
   lokalPlayer = new YT.Player('player', {events: {
     onReady: function() {
       lokalReady = true;
+      if (lokalClip) lokalPlayer.mute();
       if (lokalReleased) lokalPlayer.pauseVideo();
       else {
         if (lokalStartPaused) lokalPlayer.cueVideoById({videoId: '$videoId', startSeconds: lokalInitialSeconds});
+        else if (lokalClip && !lokalHostAutoplay) lokalPlayer.loadVideoById({videoId: '$videoId', startSeconds: lokalClipStart || 0});
         else if (!lokalHostAutoplay) lokalPlayer.playVideo();
-        lokalClock = setInterval(lokalSnapshot, 250);
+        lokalClock = setInterval(() => { lokalLoopClip(); lokalSnapshot(); }, lokalClip ? 100 : 250);
       }
       lokalSnapshot();
     },
     onStateChange: function(event) {
       if (lokalReleased && (event.data === 1 || event.data === 3)) lokalPlayer.pauseVideo();
+      lokalLoopClip();
       lokalSnapshot();
     },
     onError: function(event) {
@@ -147,10 +185,14 @@ typedef NativeAcceptanceVideoDocument = String Function({
 
 /// In-full-player video stage, retained while toggling fullscreen/Space.
 class MusicVideoSurface extends StatefulWidget {
-  const MusicVideoSurface({super.key, required this.videoId, this.controller})
-    : _acceptanceDocument = null,
-      _onAcceptanceViewCreated = null,
-      _onAcceptanceNavigationEvent = null;
+  const MusicVideoSurface({
+    super.key,
+    required this.videoId,
+    this.controller,
+    this.clip,
+  }) : _acceptanceDocument = null,
+       _onAcceptanceViewCreated = null,
+       _onAcceptanceNavigationEvent = null;
 
   /// Runs the production owner/bridge against controlled local media in debug
   /// acceptance. Product routes always use the official document above.
@@ -162,12 +204,14 @@ class MusicVideoSurface extends StatefulWidget {
     required NativeAcceptanceVideoDocument document,
     required void Function(InAppWebViewController) onViewCreated,
     void Function(InAppWebViewController, String, int?)? onNavigationEvent,
-  }) : _acceptanceDocument = document,
+  }) : clip = null,
+       _acceptanceDocument = document,
        _onAcceptanceViewCreated = onViewCreated,
        _onAcceptanceNavigationEvent = onNavigationEvent,
        assert(kDebugMode);
 
   final String videoId;
+  final CopiedTrackClip? clip;
   final Media3MusicVideoController? controller;
   final NativeAcceptanceVideoDocument? _acceptanceDocument;
   final void Function(InAppWebViewController)? _onAcceptanceViewCreated;
@@ -643,6 +687,7 @@ class _MusicVideoSurfaceState extends State<MusicVideoSurface>
                           appId: _appId,
                           deferAutoplayToHost: Platform.isIOS,
                           startPaused: output.startPaused,
+                          clip: widget.clip,
                           initialPosition: output.position,
                         ),
                     baseUrl: WebUri('$_appOrigin/'),

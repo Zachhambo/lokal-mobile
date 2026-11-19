@@ -5,6 +5,7 @@ import '../ios_foreground_transfer_barrier.dart';
 import '../ios_library_scan_epoch.dart';
 import '../ios_transfer_song_identity.dart';
 import 'desktop_music_storage.dart';
+import 'copied_track_clip.dart';
 import 'desktop_catalogue_import.dart';
 import 'desktop_genre_reconciliation.dart';
 
@@ -762,11 +763,92 @@ class LokalDesktopSource extends NetworkSourceService {
           await _putLibrarySong(row);
         },
       );
+      await _copyTrackClip(credentials, server.id, id, client);
       await syncCopiedLyrics(server, copies: [saved]);
     } finally {
       client.close();
       if (await part.exists()) await part.delete();
       if (await file.exists()) await file.delete();
+    }
+  }
+
+  Future<void> _copyTrackClip(
+    LokalRemoteCredentials credentials,
+    int serverId,
+    String trackId,
+    http.Client client, {
+    bool Function()? stillCurrent,
+  }) async {
+    final uri = credentials.origin.replace(
+      pathSegments: ['api', 'remote', 'files', trackId, 'clip'],
+    );
+    final response = await client
+        .get(uri, headers: _headers(credentials))
+        .timeout(const Duration(seconds: 15));
+    // Earlier desktop releases do not have the sidecar endpoint.
+    if (response.statusCode == 404 || stillCurrent?.call() == false) return;
+    if (response.statusCode != 200) {
+      throw const HttpException('Could not read the desktop video clip.');
+    }
+    final data =
+        (jsonDecode(response.body) as Map<String, dynamic>)['clip']
+            as Map<String, dynamic>?;
+    final extension = data?['extension'];
+    if (extension == null) {
+      await CopiedTrackClip.save(serverId, trackId, data);
+      return;
+    }
+    final version = data?['version'];
+    if (extension is! String ||
+        !CopiedTrackClip.validExtension(extension) ||
+        version is! String) {
+      throw const FormatException('Invalid copied video format.');
+    }
+    final directory = await CopiedTrackClip.directory();
+    await directory.create(recursive: true);
+    final name = '${linkUuid()}.$extension';
+    final part = File(p.join(directory.path, '$name.part'));
+    final file = File(p.join(directory.path, name));
+    var committed = false;
+    try {
+      final request =
+          http.Request(
+              'GET',
+              uri.replace(queryParameters: {'media': '1', 'version': version}),
+            )
+            ..headers.addAll(_headers(credentials))
+            ..followRedirects = false;
+      final media = await client
+          .send(request)
+          .timeout(const Duration(seconds: 15));
+      if (media.statusCode != 200) {
+        throw const HttpException('The desktop video file is unavailable.');
+      }
+      var received = 0;
+      final sink = part.openWrite();
+      try {
+        await for (final chunk in media.stream.timeout(
+          const Duration(seconds: 30),
+        )) {
+          if (stillCurrent?.call() == false) return;
+          sink.add(chunk);
+          received += chunk.length;
+        }
+      } finally {
+        await sink.close();
+      }
+      if (received == 0 ||
+          (media.contentLength != null && received != media.contentLength)) {
+        throw const HttpException('Desktop video transfer was incomplete.');
+      }
+      if (stillCurrent?.call() == false) return;
+      await part.rename(file.path);
+      if (stillCurrent?.call() == false) return;
+      await CopiedTrackClip.save(serverId, trackId, {...data!, 'file': name});
+      committed = true;
+    } finally {
+      if (await part.exists()) await part.delete();
+      if (!committed && await file.exists()) await file.delete();
     }
   }
 
@@ -805,6 +887,21 @@ class LokalDesktopSource extends NetworkSourceService {
       }
     } catch (_) {
       /* Optional artwork cannot invalidate committed audio. */
+    }
+    if (stillCurrent()) {
+      final client = GracefulHttpClient();
+      _libraryTransfers.cancelOnPause(client.close);
+      try {
+        await _copyTrackClip(
+          await _credentials(server),
+          server.id,
+          song.remoteId!,
+          client,
+          stillCurrent: stillCurrent,
+        );
+      } finally {
+        client.close();
+      }
     }
     if (stillCurrent())
       await syncCopiedLyrics(

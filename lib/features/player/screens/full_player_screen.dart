@@ -13,12 +13,14 @@ import 'package:flick/providers/lokal_remote_provider.dart';
 import 'dart:io';
 
 import 'package:flick/core/theme/lokal_performance_scope.dart';
+import 'package:flick/features/music_videos/copied_track_clip_page.dart';
 import 'package:flick/features/music_videos/media3_music_video_surface.dart';
 import 'package:flick/features/internet_radio/radio_providers.dart';
 import 'package:flick/features/internet_radio/radio_now_playing_page.dart';
 import 'package:flick/features/music_videos/video_quality_settings.dart';
 import 'package:flick/features/music_videos/music_video_providers.dart';
 import 'package:flick/providers/opt_in_source_provider.dart';
+import 'package:flick/services/link/copied_track_clip.dart';
 import 'package:flick/features/player/widgets/full_player_visuals.dart';
 import 'package:flick/features/player/widgets/full_bleed_artwork_frame.dart';
 import 'package:flick/features/player/widgets/full_player_identity_layout.dart';
@@ -3065,16 +3067,35 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
                 active: true,
                 width: (constraints.maxWidth - 8) / 4,
               )
-            else if (ref.watch(musicVideosEnabledProvider))
-              if (_player.currentSongNotifier.value case final current?)
-                if (ref.watch(musicVideoIndexProvider).videoFor(current.id)
-                    case final videoId?)
-                  chip(
-                    LucideIcons.video,
-                    'Video',
-                    () => unawaited(_enterVideoMode(current, videoId)),
-                    width: (constraints.maxWidth - 8) / 4,
+            else if (_player.currentSongNotifier.value case final current?)
+              ValueListenableBuilder(
+                valueListenable: CopiedTrackClip.revision,
+                builder: (context, _, _) => FutureBuilder(
+                  key: ValueKey(current.id),
+                  future: CopiedTrackClip.forSong(current),
+                  builder: (context, snapshot) => Consumer(
+                    builder: (context, ref, _) {
+                      final clip = snapshot.data;
+                      final automatic = ref.watch(musicVideosEnabledProvider)
+                          ? ref.watch(musicVideoIndexProvider).videoFor(current.id)
+                          : null;
+                      if (clip == null && automatic == null) {
+                        return const SizedBox.shrink();
+                      }
+                      return chip(
+                        LucideIcons.video,
+                        'Video',
+                        () => unawaited(
+                          clip == null
+                              ? _enterVideoMode(current, automatic!)
+                              : openCopiedTrackClip(context, current, clip),
+                        ),
+                        width: (constraints.maxWidth - 8) / 4,
+                      );
+                    },
                   ),
+                ),
+              ),
             ValueListenableBuilder<Duration?>(
               valueListenable: _player.sleepTimerRemainingNotifier,
               builder: (_, remaining, __) => chip(

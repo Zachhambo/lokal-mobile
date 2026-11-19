@@ -162,9 +162,10 @@ class LinkJournal {
     String entity,
     String entityId,
     String op,
-    Map<String, dynamic> fields,
-  ) async {
-    if (!Database.isInitialized || applyingRemote) return;
+    Map<String, dynamic> fields, {
+    bool explicitEdit = false,
+  }) async {
+    if (!Database.isInitialized || (applyingRemote && !explicitEdit)) return;
     await _serial(() async {
       final prefs = await SharedPreferences.getInstance();
       final clock = nextLinkClock(prefs.getString('lokal.link.hlc') ?? '');
@@ -409,6 +410,34 @@ class LinkJournal {
       await prefs.setString('lokal.link.hlc', clock);
       return accepted;
     });
+  }
+
+  Future<Map<String, dynamic>?> latestVideoClipEdit(Song song) async {
+    if (!Database.isInitialized) return null;
+    final key = await trackKeyFor(song);
+    final rows = await Database.instance.libraryOpEntitys
+        .filter()
+        .entityIdEqualTo(key)
+        .opEqualTo('track.edit')
+        .findAll();
+    if (rows.isEmpty) return null;
+    final localDevice = await deviceId();
+    String? newest;
+    Map<String, dynamic>? result;
+    for (final row in rows) {
+      final stamp = '${row.hlc}:${row.deviceId}:${row.opId}';
+      if (newest != null && stamp.compareTo(newest) <= 0) continue;
+      final fields = jsonDecode(row.fieldsJson) as Map<String, dynamic>;
+      if (!fields.containsKey('video_clip')) continue;
+      final track = fields['track'];
+      if (row.deviceId == localDevice && track is Map &&
+          track['id'] != song.id) {
+        continue;
+      }
+      newest = stamp;
+      result = fields;
+    }
+    return result;
   }
 
   Future<bool> wins(Map<String, dynamic> item, String field) async {

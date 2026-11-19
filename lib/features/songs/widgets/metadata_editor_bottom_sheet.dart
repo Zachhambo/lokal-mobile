@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flick/widgets/common/flick_dialog.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +10,7 @@ import 'package:flick/core/theme/app_colors.dart';
 import 'package:flick/models/song.dart';
 import 'package:flick/providers/providers.dart';
 import 'package:flick/services/metadata_editor_service.dart';
+import 'package:flick/services/link/copied_track_clip.dart';
 import 'package:flick/services/player_service.dart';
 import 'package:flick/src/rust/api/metadata_editor.dart' as rust_metadata;
 import 'package:flick/widgets/common/glass_bottom_sheet.dart';
@@ -55,9 +58,8 @@ class MetadataEditorBottomSheet extends ConsumerStatefulWidget {
 
     LokalToast.show(
       context,
-      result.verified
-          ? l10n.savedAndVerified
-          : result.message ?? l10n.savedVerificationPending,
+      result.message ??
+          (result.verified ? l10n.savedAndVerified : l10n.savedVerificationPending),
       duration: Duration(seconds: result.verified ? 2 : 4),
     );
     return saved;
@@ -79,6 +81,12 @@ class _MetadataEditorBottomSheetState
   late TextEditingController _trackNumberController;
   late TextEditingController _discNumberController;
 
+  final _videoLink = TextEditingController();
+  final _clipStart = TextEditingController();
+  final _clipEnd = TextEditingController();
+  CopiedTrackClip? _originalClip;
+  bool _loadingClip = true;
+
   late FocusNode _titleFocus;
   bool _isSaving = false;
   String? _error;
@@ -95,17 +103,18 @@ class _MetadataEditorBottomSheetState
     _titleController = TextEditingController(text: s.title);
     _artistController = TextEditingController(text: s.artist);
     _albumController = TextEditingController(text: s.album ?? '');
-    _albumArtistController =
-        TextEditingController(text: s.albumArtist ?? '');
+    _albumArtistController = TextEditingController(text: s.albumArtist ?? '');
     _genreController = TextEditingController(text: s.genre ?? '');
-    _yearController =
-        TextEditingController(text: s.year?.toString() ?? '');
-    _trackNumberController =
-        TextEditingController(text: s.trackNumber?.toString() ?? '');
-    _discNumberController =
-        TextEditingController(text: s.discNumber?.toString() ?? '');
+    _yearController = TextEditingController(text: s.year?.toString() ?? '');
+    _trackNumberController = TextEditingController(
+      text: s.trackNumber?.toString() ?? '',
+    );
+    _discNumberController = TextEditingController(
+      text: s.discNumber?.toString() ?? '',
+    );
 
     _titleFocus = FocusNode();
+    unawaited(_loadClip());
 
     for (final c in [
       _titleController,
@@ -116,10 +125,31 @@ class _MetadataEditorBottomSheetState
       _yearController,
       _trackNumberController,
       _discNumberController,
+      _videoLink,
+      _clipStart,
+      _clipEnd,
     ]) {
       c.addListener(() {
         if (mounted) setState(() {});
       });
+    }
+  }
+
+  Future<void> _loadClip() async {
+    try {
+      final clip = await CopiedTrackClip.forSong(widget.song);
+      if (!mounted) return;
+      if (clip?.videoId != null) {
+        _originalClip = clip;
+        _videoLink.text = clip!.youtubeLink!;
+        _clipStart.text = clip.start?.toString() ?? '';
+        _clipEnd.text = clip.end?.toString() ?? '';
+      }
+    } catch (_) {
+      if (!mounted) return;
+      _error = lokalText('Could not load the video clip.');
+    } finally {
+      if (mounted) setState(() => _loadingClip = false);
     }
   }
 
@@ -133,11 +163,29 @@ class _MetadataEditorBottomSheetState
     _yearController.dispose();
     _trackNumberController.dispose();
     _discNumberController.dispose();
+    _videoLink.dispose();
+    _clipStart.dispose();
+    _clipEnd.dispose();
     _titleFocus.dispose();
     super.dispose();
   }
 
-  bool get _hasChanges {
+  String? get _videoId => CopiedTrackClip.youtubeIdFromLink(_videoLink.text);
+  double? get _start => CopiedTrackClip.parseTime(_clipStart.text);
+  double? get _end => CopiedTrackClip.parseTime(_clipEnd.text);
+
+  bool get _clipChanged {
+    if (_loadingClip) return false;
+    if (_videoLink.text.trim().isEmpty) return _originalClip != null;
+    return _videoId == null ||
+        _videoId != _originalClip?.videoId ||
+        _start != _originalClip?.start ||
+        _end != _originalClip?.end;
+  }
+
+  bool get _hasChanges => _tagsChanged || _clipChanged;
+
+  bool get _tagsChanged {
     final s = widget.song;
     return _titleController.text != s.title ||
         _artistController.text != s.artist ||
@@ -157,10 +205,8 @@ class _MetadataEditorBottomSheetState
     return null;
   }
 
-  String? _trackError() =>
-      _positiveIntError(_trackNumberController, 'track');
-  String? _discError() =>
-      _positiveIntError(_discNumberController, 'disc');
+  String? _trackError() => _positiveIntError(_trackNumberController, 'track');
+  String? _discError() => _positiveIntError(_discNumberController, 'disc');
 
   String? _positiveIntError(TextEditingController c, String label) {
     final t = c.text.trim();
@@ -170,48 +216,83 @@ class _MetadataEditorBottomSheetState
     return null;
   }
 
+  String? get _videoLinkError =>
+      _videoLink.text.trim().isNotEmpty && _videoId == null
+      ? lokalText('Enter a YouTube or YouTube Music video link.')
+      : null;
+
+  String? get _clipStartError => _start?.isNaN == true
+      ? lokalText('Enter seconds or a time such as 1:15.')
+      : null;
+
+  String? get _clipEndError {
+    final end = _end;
+    if (end == null) return null;
+    if (end.isNaN) return lokalText('Enter seconds or a time such as 1:15.');
+    return end <= (_start ?? 0)
+        ? lokalText('Clip end must be after clip start.')
+        : null;
+  }
+
   bool get _hasInvalidFields =>
-      _yearError() != null || _trackError() != null || _discError() != null;
+      _yearError() != null ||
+      _trackError() != null ||
+      _discError() != null ||
+      _videoLinkError != null ||
+      (_videoId != null && (_clipStartError != null || _clipEndError != null));
 
   Future<void> _save() async {
     if (!_hasChanges || _isSaving || _hasInvalidFields) return;
-    if (!_isEditable) return;
+    if (!_isEditable || _loadingClip) return;
     setState(() {
       _isSaving = true;
       _error = null;
     });
 
-    final fields = rust_metadata.TagEditFields(
-      title: _titleController.text.trim().isNotEmpty
-          ? _titleController.text.trim()
-          : null,
-      artist: _artistController.text.trim().isNotEmpty
-          ? _artistController.text.trim()
-          : null,
-      album: _albumController.text.trim().isNotEmpty
-          ? _albumController.text.trim()
-          : null,
-      albumArtist: _albumArtistController.text.trim().isNotEmpty
-          ? _albumArtistController.text.trim()
-          : null,
-      genre: _genreController.text.trim().isNotEmpty
-          ? _genreController.text.trim()
-          : null,
-      year: int.tryParse(_yearController.text.trim()),
-      trackNumber: int.tryParse(_trackNumberController.text.trim()),
-      discNumber: int.tryParse(_discNumberController.text.trim()),
-    );
+    final saveClip = _clipChanged;
+    final videoId = _videoId;
+    final start = _start;
+    final end = _end;
+    var verified = true;
+    String? message = _tagsChanged ? null : l10n.saved;
+    if (_tagsChanged) {
+      final fields = rust_metadata.TagEditFields(
+        title: _titleController.text.trim().isNotEmpty
+            ? _titleController.text.trim()
+            : null,
+        artist: _artistController.text.trim().isNotEmpty
+            ? _artistController.text.trim()
+            : null,
+        album: _albumController.text.trim().isNotEmpty
+            ? _albumController.text.trim()
+            : null,
+        albumArtist: _albumArtistController.text.trim().isNotEmpty
+            ? _albumArtistController.text.trim()
+            : null,
+        genre: _genreController.text.trim().isNotEmpty
+            ? _genreController.text.trim()
+            : null,
+        year: int.tryParse(_yearController.text.trim()),
+        trackNumber: int.tryParse(_trackNumberController.text.trim()),
+        discNumber: int.tryParse(_discNumberController.text.trim()),
+      );
 
-    final result =
-        await MetadataEditorService.instance.writeTags(widget.song, fields);
+      final result = await MetadataEditorService.instance.writeTags(
+        widget.song,
+        fields,
+      );
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    if (result.saved) {
+      if (!result.saved) {
+        setState(() {
+          _isSaving = false;
+          _error = result.message ?? l10n.failedToSaveMetadata2;
+        });
+        return;
+      }
       final path = widget.song.filePath;
       if (path != null && path.isNotEmpty) {
-        // Immediate in-memory mirror so mini/full player, queue and notification
-        // update without waiting for DB watch or track change.
         PlayerService().syncSongMetadata(
           filePath: path,
           title: fields.title,
@@ -225,24 +306,35 @@ class _MetadataEditorBottomSheetState
         );
       }
       ref.invalidate(songsProvider);
-
-      final verified = result.verified;
-      final message = verified ? null : result.message;
-      if (!mounted) return;
-      // Return the result so the caller can show feedback after the sheet closes.
-      Navigator.of(context).pop(
-        _MetadataEditorSheetResult(
-          saved: true,
-          verified: verified,
-          message: message,
-        ),
-      );
-    } else {
-      setState(() {
-        _isSaving = false;
-        _error = result.message ?? l10n.failedToSaveMetadata2;
-      });
+      verified = result.verified;
+      if (!verified) message = result.message;
     }
+    if (saveClip) {
+      try {
+        await CopiedTrackClip.edit(
+          widget.song,
+          videoId: videoId,
+          start: start,
+          end: end,
+        );
+      } catch (_) {
+        if (mounted) {
+          setState(() {
+            _isSaving = false;
+            _error = lokalText('Could not save the video clip.');
+          });
+        }
+        return;
+      }
+    }
+    if (!mounted) return;
+    Navigator.of(context).pop(
+      _MetadataEditorSheetResult(
+        saved: true,
+        verified: verified,
+        message: message,
+      ),
+    );
   }
 
   void _handleClose() {
@@ -258,7 +350,11 @@ class _MetadataEditorBottomSheetState
   Widget build(BuildContext context) {
     final accent = context.adaptiveTextPrimary;
     final canSave =
-        _isEditable && _hasChanges && !_isSaving && !_hasInvalidFields;
+        _isEditable &&
+        _hasChanges &&
+        !_isSaving &&
+        !_loadingClip &&
+        !_hasInvalidFields;
 
     // PopScope to intercept system back / drag dismiss when there are changes.
     // Header (drag handle + "Edit Metadata" + X) is kept outside the scroll
@@ -295,8 +391,7 @@ class _MetadataEditorBottomSheetState
                   padding: const EdgeInsets.all(AppConstants.spacingXs),
                   decoration: BoxDecoration(
                     color: AppColors.surfaceLight,
-                    borderRadius:
-                        BorderRadius.circular(AppConstants.radiusMd),
+                    borderRadius: BorderRadius.circular(AppConstants.radiusMd),
                     border: Border.all(color: AppColors.glassBorder),
                   ),
                   child: Icon(
@@ -312,8 +407,7 @@ class _MetadataEditorBottomSheetState
           Flexible(
             fit: FlexFit.loose,
             child: SingleChildScrollView(
-              keyboardDismissBehavior:
-                  ScrollViewKeyboardDismissBehavior.onDrag,
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -325,32 +419,103 @@ class _MetadataEditorBottomSheetState
                     _buildErrorBanner(context),
                     const SizedBox(height: AppConstants.spacingMd),
                   ],
-                  _buildField(context, l10n.title, _titleController,
-                      focusNode: _titleFocus,
-                      enabled: _isEditable && !_isSaving,
-                      textInputAction: TextInputAction.next),
-                  _buildField(context, l10n.artist, _artistController,
-                      enabled: _isEditable && !_isSaving),
-                  _buildField(context, l10n.album, _albumController,
-                      enabled: _isEditable && !_isSaving),
-                  _buildField(context, l10n.albumArtist,
-                      _albumArtistController,
-                      enabled: _isEditable && !_isSaving),
-                  _buildField(context, l10n.genre, _genreController,
-                      enabled: _isEditable && !_isSaving),
-                  _buildField(context, l10n.year, _yearController,
-                      enabled: _isEditable && !_isSaving,
-                      keyboardType: TextInputType.number,
-                      errorText: _yearError()),
-                  _buildField(context, l10n.track3, _trackNumberController,
-                      enabled: _isEditable && !_isSaving,
-                      keyboardType: TextInputType.number,
-                      errorText: _trackError()),
-                  _buildField(context, l10n.disc2, _discNumberController,
-                      enabled: _isEditable && !_isSaving,
-                      keyboardType: TextInputType.number,
-                      errorText: _discError()),
+                  _buildField(
+                    context,
+                    l10n.title,
+                    _titleController,
+                    focusNode: _titleFocus,
+                    enabled: _isEditable && !_isSaving,
+                    textInputAction: TextInputAction.next,
+                  ),
+                  _buildField(
+                    context,
+                    l10n.artist,
+                    _artistController,
+                    enabled: _isEditable && !_isSaving,
+                  ),
+                  _buildField(
+                    context,
+                    l10n.album,
+                    _albumController,
+                    enabled: _isEditable && !_isSaving,
+                  ),
+                  _buildField(
+                    context,
+                    l10n.albumArtist,
+                    _albumArtistController,
+                    enabled: _isEditable && !_isSaving,
+                  ),
+                  _buildField(
+                    context,
+                    l10n.genre,
+                    _genreController,
+                    enabled: _isEditable && !_isSaving,
+                  ),
+                  _buildField(
+                    context,
+                    l10n.year,
+                    _yearController,
+                    enabled: _isEditable && !_isSaving,
+                    keyboardType: TextInputType.number,
+                    errorText: _yearError(),
+                  ),
+                  _buildField(
+                    context,
+                    l10n.track3,
+                    _trackNumberController,
+                    enabled: _isEditable && !_isSaving,
+                    keyboardType: TextInputType.number,
+                    errorText: _trackError(),
+                  ),
+                  _buildField(
+                    context,
+                    l10n.disc2,
+                    _discNumberController,
+                    enabled: _isEditable && !_isSaving,
+                    keyboardType: TextInputType.number,
+                    errorText: _discError(),
+                  ),
                   const SizedBox(height: AppConstants.spacingLg),
+                  if (_isEditable) ...[
+                    _buildField(
+                      context,
+                      lokalText('YouTube video link'),
+                      _videoLink,
+                      enabled: !_loadingClip && !_isSaving,
+                      keyboardType: TextInputType.url,
+                      textInputAction: TextInputAction.next,
+                      errorText: _videoLinkError,
+                    ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: _buildField(
+                            context,
+                            lokalText('Clip start'),
+                            _clipStart,
+                            enabled: _videoId != null && !_isSaving,
+                            errorText: _videoId == null
+                                ? null
+                                : _clipStartError,
+                            hintText: '0:00',
+                            textInputAction: TextInputAction.next,
+                          ),
+                        ),
+                        const SizedBox(width: AppConstants.spacingSm),
+                        Expanded(
+                          child: _buildField(
+                            context,
+                            lokalText('Clip end'),
+                            _clipEnd,
+                            enabled: _videoId != null && !_isSaving,
+                            errorText: _videoId == null ? null : _clipEndError,
+                            hintText: '1:15',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   _buildReadOnlyInfo(context),
                   const SizedBox(height: AppConstants.spacingSm),
                 ],
@@ -444,6 +609,7 @@ class _MetadataEditorBottomSheetState
     TextInputType keyboardType = TextInputType.text,
     TextInputAction? textInputAction,
     String? errorText,
+    String? hintText,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: AppConstants.spacingMd),
@@ -494,6 +660,7 @@ class _MetadataEditorBottomSheetState
                 borderRadius: BorderRadius.circular(AppConstants.radiusMd),
                 borderSide: BorderSide(color: AppColors.glassBorder),
               ),
+              hintText: hintText,
               errorText: errorText,
               errorBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(AppConstants.radiusMd),
