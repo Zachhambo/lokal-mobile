@@ -181,29 +181,20 @@ class _ListeningRecapScreenState extends ConsumerState<ListeningRecapScreen>
             backgroundColor: Colors.transparent,
             body: SafeArea(
               bottom: false,
-              child: Padding(
-                // Paint the route's content while keeping the shell dock's
-                // reserved inset transparent for its own backdrop.
-                padding: EdgeInsets.only(
-                  bottom: MediaQuery.paddingOf(context).bottom,
-                ),
-                child: ColoredBox(
-                  color: context.lokal.bg,
-                  child: Builder(builder: (contentContext) => MediaQuery.removePadding(
-                    context: contentContext,
-                    removeBottom: true,
-                    child: Column(
-                      children: [
-                        _header(),
-                        ReplayPeriodPicker(
-                          selected: _period,
-                          onSelected: _selectPeriod,
-                        ),
-                        const SizedBox(height: 4),
-                        Expanded(child: Builder(builder: _body)),
-                      ],
+              // Paint behind the floating dock. The scroll views handle its
+              // clearance as bottom padding so their last items stay reachable.
+              child: ColoredBox(
+                color: context.lokal.bg,
+                child: Column(
+                  children: [
+                    _header(),
+                    ReplayPeriodPicker(
+                      selected: _period,
+                      onSelected: _selectPeriod,
                     ),
-                  )),
+                    const SizedBox(height: 4),
+                    Expanded(child: Builder(builder: _body)),
+                  ],
                 ),
               ),
             ),
