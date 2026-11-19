@@ -1148,6 +1148,12 @@ void main() {
         tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor,
         Colors.transparent,
       );
+      final recapList = find.byKey(const ValueKey('recap-view-overview'));
+      expect(tester.getRect(recapList).bottom, 844);
+      expect(
+        tester.widget<ListView>(recapList).padding,
+        const EdgeInsets.fromLTRB(16, 0, 16, 192),
+      );
       await _snapshot(tester, 'replay-floating-navigation');
       await tester.tap(find.byTooltip('Save / customize Replay'));
       await tester.pumpAndSettle();
