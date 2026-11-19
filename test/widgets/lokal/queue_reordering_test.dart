@@ -332,7 +332,22 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.text(lokalText('Queue')), findsOneWidget);
+        final heading = find.text(
+          embedded
+              ? "${lokalText('Queue')} · ${l10n.upcomingSong(6)}"
+              : lokalText('Queue'),
+          findRichText: embedded,
+        );
+        expect(heading, findsOneWidget);
+        final clearButton = find.byKey(const ValueKey('queue-clear-upcoming'));
+        if (embedded) {
+          expect(find.text(l10n.upNext), findsNothing);
+          expect(find.text(lokalText('Hold to reorder')), findsNothing);
+          expect(
+            tester.getCenter(heading).dy,
+            closeTo(tester.getCenter(clearButton).dy, 1),
+          );
+        }
         expect(
           find.byKey(const ValueKey('queue-clear-upcoming')),
           findsOneWidget,
