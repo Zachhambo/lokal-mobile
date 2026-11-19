@@ -17,6 +17,7 @@ import '../favorites_service.dart';
 import '../playlist_service.dart';
 import '../online_playlist_reference.dart';
 import 'link_journal.dart';
+import 'copied_track_clip.dart';
 import 'link_playlist_order.dart';
 import 'link_profile_service.dart';
 import 'lokal_desktop_source.dart';
@@ -724,12 +725,20 @@ class LinkSyncCoordinator {
           'year',
           'track_num',
         ];
-        // Desktop UPDATE triggers can emit hash-only operations even when
-        // tag values did not change. They must not rewrite every phone row.
-        if (!editable.any(fields.containsKey)) return;
-        final song = await _match({...fields, 'track_key': item['entity_id']});
-        if (song?.filePath == null) return;
-        await journal.registerTrackAlias(song!.id, item['entity_id'] as String);
+        final editedClip = fields.containsKey('video_clip');
+        final editedTags = editable.any(fields.containsKey);
+        // Hash-only operations must not rewrite every phone row.
+        if (!editedClip && !editedTags) return;
+        final identity = fields['track'];
+        final song = await _match({
+          if (identity is Map) ...Map<String, dynamic>.from(identity),
+          ...fields,
+          'track_key': item['entity_id'],
+        });
+        if (song == null) return;
+        await journal.registerTrackAlias(song.id, item['entity_id'] as String);
+        if (editedClip) CopiedTrackClip.revision.value++;
+        if (!editedTags || song.filePath == null) return;
         final winning = <String, dynamic>{};
         for (final field in [
           'title',
