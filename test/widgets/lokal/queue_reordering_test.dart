@@ -61,6 +61,14 @@ class _QueuePlayer extends PlayerNotifier {
   List<String> get manualIds => state.queue.map((s) => s.id).toList();
 }
 
+Finder _queueHeading({required bool embedded, required int upcomingCount}) {
+  final title = lokalText('Queue');
+  return find.text(
+    embedded ? '$title · ${l10n.upcomingSong(upcomingCount)}' : title,
+    findRichText: embedded,
+  );
+}
+
 Future<void> _drag(WidgetTester tester, String key, double dy) async {
   final grip = find.byKey(ValueKey(key));
   await tester.ensureVisible(grip);
@@ -252,7 +260,10 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.text('Queue'), findsOneWidget);
+        expect(
+          _queueHeading(embedded: embedded, upcomingCount: 6),
+          findsOneWidget,
+        );
         expect(
           find.text('Track d'),
           findsOneWidget,
@@ -332,12 +343,7 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        final heading = find.text(
-          embedded
-              ? "${lokalText('Queue')} · ${l10n.upcomingSong(6)}"
-              : lokalText('Queue'),
-          findRichText: embedded,
-        );
+        final heading = _queueHeading(embedded: embedded, upcomingCount: 6);
         expect(heading, findsOneWidget);
         final clearButton = find.byKey(const ValueKey('queue-clear-upcoming'));
         if (embedded) {
