@@ -1,10 +1,24 @@
 import 'package:flick/features/discovery/lastfm_discovery.dart';
 import 'package:flick/features/playlist_links/playlist_link_models.dart';
 import 'package:flick/features/spotify/provider_playlist_track_browser.dart';
+import 'package:flick/providers/player_provider.dart';
+import 'package:flick/services/player_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+// Shuffle tests exercise queue selection, not audio playback. Supplying the
+// minimal player interface avoids constructing a DB-backed PlayerService
+// before Database.init() in a widget-only test.
+class _FakeShufflePlayerService implements PlayerService {
+  @override
+  List<T> shuffleForPlayback<T>(List<T> items, String Function(T) idOf) =>
+      List<T>.of(items.reversed);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -18,7 +32,11 @@ void main() {
   Widget app({
     required void Function(List<int> queue, int index) onPlay,
     required void Function(int index) onActions,
-  }) => ProviderScope(child: MaterialApp(
+  }) => ProviderScope(
+        overrides: [
+          playerServiceProvider.overrideWithValue(_FakeShufflePlayerService()),
+        ],
+        child: MaterialApp(
         home: Scaffold(
           body: ProviderPlaylistTrackBrowser(
             tracks: tracks,
