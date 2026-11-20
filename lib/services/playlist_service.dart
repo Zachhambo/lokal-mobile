@@ -253,7 +253,11 @@ class PlaylistService {
       await _savePlaylists();
     } catch (_) {
       if (coverPath != null) {
-        await File(coverPath).delete().catchError((Object _) => File(coverPath));
+        try {
+          await File(coverPath).delete();
+        } catch (_) {
+          // Retain the original persistence error.
+        }
       }
       rethrow;
     }
