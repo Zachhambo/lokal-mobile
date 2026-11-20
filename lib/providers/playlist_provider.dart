@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar_community/isar.dart';
 import 'package:flick/data/database.dart';
@@ -106,6 +107,13 @@ class PlaylistsNotifier extends AsyncNotifier<PlaylistsState> {
     }
 
     return success;
+  }
+
+  Future<bool> setPlaylistCover(String id, Uint8List? imageBytes) async {
+    final changed = await ref.read(playlistServiceProvider)
+        .setPlaylistCover(id, imageBytes);
+    if (changed && ref.mounted) ref.invalidateSelf();
+    return changed;
   }
 
   Future<bool> renamePlaylist(String id, String newName) async {
