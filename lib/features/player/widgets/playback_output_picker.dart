@@ -49,21 +49,30 @@ class _PlaybackOutputPickerState extends ConsumerState<PlaybackOutputPicker> {
   Future<void> _refresh() async {
     if (_refreshing || _switching) return;
     setState(() { _refreshing = true; _error = null; });
-    try {
-      await ref.read(castProvider.notifier).discover();
-    } catch (error) {
-      if (mounted) setState(() => _error = _message(error));
-    }
-    if (Platform.isAndroid) {
-      try {
-        final routes = await ChromecastBackend().getOutputRoutes()
-            .timeout(const Duration(seconds: 5));
-        if (mounted) setState(() => _localRoutes = routes);
-      } catch (_) {
-        // Android's system output picker remains available when MediaRouter
-        // cannot enumerate hardware routes on a particular phone.
-      }
-    }
+    // Local routes must never wait for network discovery (which can take
+    // seconds on Wi-Fi or when an SSDP receiver is unreachable).
+    final tasks = <Future<void>>[
+      () async {
+        try {
+          await ref.read(castProvider.notifier).discover();
+        } catch (error) {
+          if (mounted) setState(() => _error = _message(error));
+        }
+      }(),
+      if (Platform.isAndroid)
+        () async {
+          // Query the actual USAGE_MEDIA output independently of MediaRouter.
+          unawaited(AndroidAudioDeviceService.instance.refreshMediaOutput());
+          try {
+            final routes = await ChromecastBackend().getOutputRoutes()
+                .timeout(const Duration(seconds: 3));
+            if (mounted) setState(() => _localRoutes = routes);
+          } catch (_) {
+            // Keep the already known output and Cast devices visible.
+          }
+        }(),
+    ];
+    await Future.wait(tasks);
     if (mounted) setState(() => _refreshing = false);
   }
 
@@ -93,7 +102,16 @@ class _PlaybackOutputPickerState extends ConsumerState<PlaybackOutputPicker> {
   }
 
   Future<void> _returnToPhone() => _run(() async {
-    if (ref.read(castProvider).isActive) {
+    if (Platform.isAndroid) {
+      // The default local route is the speaker, not every output connected
+      // to the handset. A Bluetooth route must not be treated as 'phone'.
+      final selected = await CastingService.instance
+          .selectLocalOutputRoute('__phone__');
+      if (!selected) {
+        throw StateError(lokalText('Could not switch to the phone speaker.'));
+      }
+      unawaited(AndroidAudioDeviceService.instance.refreshMediaOutput());
+    } else if (ref.read(castProvider).isActive) {
       await ref.read(castProvider.notifier).disconnect();
     }
   });
@@ -167,11 +185,7 @@ class _PlaybackOutputPickerState extends ConsumerState<PlaybackOutputPicker> {
             item.id != active.id || item.backend != active.backend,
       ),
     ];
-    final systemLabel = Platform.isIOS
-        ? lokalText('AirPlay and headphones')
-        : lokalText('Bluetooth, USB and system audio');
-
-    return SafeArea(
+     return SafeArea(
       top: false,
       child: ConstrainedBox(
         constraints: BoxConstraints(
@@ -214,39 +228,72 @@ class _PlaybackOutputPickerState extends ConsumerState<PlaybackOutputPicker> {
                   fontSize: 13,
                 )),
               ),
-            ListTile(
-              key: const ValueKey('output-picker-phone'),
-              leading: const Icon(Icons.smartphone_rounded),
-              title: Text(l10n.thisDevice),
-              subtitle: Text(lokalText('Play on this phone')),
-              selected: active == null,
-              trailing: active == null ? const Icon(Icons.check_rounded) : null,
-              enabled: !busy,
-              onTap: _returnToPhone,
+            ValueListenableBuilder<AndroidPlaybackDeviceInfo>(
+              valueListenable: AndroidAudioDeviceService.instance.mediaOutputInfoNotifier,
+              builder: (context, media, _) {
+                final knownMedia = Platform.isAndroid && media.routeType != null;
+                final hasSelectedLocalRoute =
+                    _localRoutes.any((route) => route['selected'] == true);
+                final phoneSelected = active == null &&
+                    (Platform.isIOS ||
+                     (knownMedia
+                         ? media.isInternalRoute
+                         : !hasSelectedLocalRoute));
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ListTile(
+                      key: const ValueKey('output-picker-phone'),
+                      leading: const Icon(Icons.smartphone_rounded),
+                      title: Text(l10n.thisDevice),
+                      subtitle: Text(lokalText('Play on this phone')),
+                      selected: phoneSelected,
+                      trailing: phoneSelected
+                          ? const Icon(Icons.check_rounded) : null,
+                      enabled: !busy,
+                      onTap: _returnToPhone,
+                    ),
+                    if (Platform.isIOS)
+                      ListTile(
+                        key: const ValueKey('output-picker-system'),
+                        leading: const Icon(Icons.headphones_rounded),
+                        title: Text(lokalText('AirPlay and headphones')),
+                        subtitle: Text(lokalText('Choose a local audio output')),
+                        enabled: !busy,
+                        onTap: _systemOutputs,
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                      ),
+                    if (Platform.isAndroid)
+                      for (final route in _localRoutes)
+                        Builder(builder: (context) {
+                          final type = route['type'] as String? ?? '';
+                          final selected = active == null &&
+                              route['selected'] == true &&
+                              (!knownMedia ||
+                                (media.isBluetoothRoute &&
+                                    type == 'Bluetooth') ||
+                                (media.isUsbRoute && type == 'USB') ||
+                                (media.isWiredRoute && type == 'Wired') ||
+                                (media.isDockRoute && type == 'Dock') ||
+                                (media.isInternalRoute && type == 'Speaker'));
+                          return ListTile(
+                            key: ValueKey('output-picker-local-${route['id']}'),
+                            leading: Icon(type == 'Bluetooth'
+                                ? Icons.headphones_rounded
+                                : Icons.speaker_rounded),
+                            title: Text(route['name'] as String? ?? l10n.output),
+                            subtitle: Text(type),
+                            selected: selected,
+                            trailing: selected
+                                ? const Icon(Icons.check_rounded) : null,
+                            enabled: !busy,
+                            onTap: () => _selectLocal(route),
+                          );
+                        }),
+                  ],
+                );
+              },
             ),
-            if (Platform.isAndroid || Platform.isIOS)
-              ListTile(
-                key: const ValueKey('output-picker-system'),
-                leading: const Icon(Icons.headphones_rounded),
-                title: Text(systemLabel),
-                subtitle: Text(lokalText('Choose a local audio output')),
-                enabled: !busy,
-                onTap: _systemOutputs,
-                trailing: const Icon(Icons.chevron_right_rounded),
-              ),
-            if (Platform.isAndroid)
-              for (final route in _localRoutes)
-                ListTile(
-                  key: ValueKey('output-picker-local-${route['id']}'),
-                  leading: const Icon(Icons.speaker_rounded),
-                  title: Text(route['name'] as String? ?? l10n.output),
-                  subtitle: Text(route['type'] as String? ?? ''),
-                  selected: active == null && route['selected'] == true,
-                  trailing: active == null && route['selected'] == true
-                      ? const Icon(Icons.check_rounded) : null,
-                  enabled: !busy,
-                  onTap: () => _selectLocal(route),
-                ),
             const Divider(),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 6),
