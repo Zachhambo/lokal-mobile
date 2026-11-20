@@ -232,13 +232,11 @@ class _PlaybackOutputPickerState extends ConsumerState<PlaybackOutputPicker> {
               valueListenable: AndroidAudioDeviceService.instance.mediaOutputInfoNotifier,
               builder: (context, media, _) {
                 final knownMedia = Platform.isAndroid && media.routeType != null;
-                final hasSelectedLocalRoute =
-                    _localRoutes.any((route) => route['selected'] == true);
+                // Do not optimistically check the phone while Android is
+                // still resolving the real media route. Bluetooth may already
+                // be playing even before MediaRouter's inventory arrives.
                 final phoneSelected = active == null &&
-                    (Platform.isIOS ||
-                     (knownMedia
-                         ? media.isInternalRoute
-                         : !hasSelectedLocalRoute));
+                    (Platform.isIOS || (knownMedia && media.isInternalRoute));
                 return Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
