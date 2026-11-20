@@ -533,9 +533,16 @@ class CastController(private val context: Context) {
     }
 
     fun selectOutputRoute(deviceId: String): Boolean {
-        val target = mediaRouter.routes.firstOrNull { it.id.toString() == deviceId && it.playbackType == MediaRouter.RouteInfo.PLAYBACK_TYPE_LOCAL } ?: return false
+        // Explicit phone selection: Android's default local route must be
+        // selectable even though it is hidden from the list of other outputs.
+        val target = if (deviceId == "__phone__") mediaRouter.defaultRoute
+            else mediaRouter.routes.firstOrNull {
+                it.id.toString() == deviceId &&
+                    it.playbackType == MediaRouter.RouteInfo.PLAYBACK_TYPE_LOCAL
+            } ?: return false
+        if (target.playbackType != MediaRouter.RouteInfo.PLAYBACK_TYPE_LOCAL) return false
         mediaRouter.selectRoute(target)
-        return true
+        return target.isSelected
     }
 
     private fun outputTypeLabel(r: MediaRouter.RouteInfo): String {
