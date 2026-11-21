@@ -1363,6 +1363,7 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
       return DesktopRemoteFullPlayer(
         onClose: _close,
         initialLyrics: widget.initialLyrics,
+        heroTag: widget.heroTag,
       );
     }
     // Stations share this exact spring-driven player route with local music
