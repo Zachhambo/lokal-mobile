@@ -20,6 +20,7 @@ import 'package:flick/features/player/widgets/player_transport_controls.dart';
 import 'package:flick/features/player/widgets/song_stage_carousel.dart';
 import 'package:flick/features/player/screens/desktop_remote_lyrics_panel.dart';
 import 'package:flick/features/queue/screens/queue_screen.dart';
+import 'package:flick/models/song.dart';
 import 'package:flick/models/lokal_remote_state.dart';
 import 'package:flick/l10n/l10n.dart';
 import 'package:flick/providers/lokal_remote_provider.dart';
