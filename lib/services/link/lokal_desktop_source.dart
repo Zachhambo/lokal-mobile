@@ -8,6 +8,7 @@ import 'desktop_music_storage.dart';
 import 'copied_track_clip.dart';
 import 'desktop_catalogue_import.dart';
 import 'desktop_genre_reconciliation.dart';
+import 'desktop_track_copy_command.dart';
 
 import 'package:path/path.dart' as p;
 
@@ -76,13 +77,17 @@ class LokalDesktopSource extends NetworkSourceService {
   LokalDesktopSource({
     http.Client Function()? uploadClientFactory,
     http.Client Function()? originalClientFactory,
+    http.Client Function()? catalogueClientFactory,
     bool? iosLibraryMutations,
   }) : _iosLibraryMutations = iosLibraryMutations ?? Platform.isIOS,
        _uploadClientFactory = uploadClientFactory ?? GracefulHttpClient.new,
-       _originalClientFactory = originalClientFactory ?? GracefulHttpClient.new;
+       _originalClientFactory = originalClientFactory ?? GracefulHttpClient.new,
+       _catalogueClientFactory =
+           catalogueClientFactory ?? GracefulHttpClient.new;
   final bool _iosLibraryMutations;
   final http.Client Function() _uploadClientFactory;
   final http.Client Function() _originalClientFactory;
+  final http.Client Function() _catalogueClientFactory;
   static final instance = LokalDesktopSource();
   final _libraryTransfers = IosForegroundTransferBarrier();
   int get libraryTransferEpoch => _libraryTransfers.epoch;
@@ -634,6 +639,95 @@ class LokalDesktopSource extends NetworkSourceService {
     }
   }
 
+  Future<List<Map<String, dynamic>>> lookupCatalogueTracks(
+    LokalRemoteCredentials credentials,
+    Object? requestedIds,
+  ) async {
+    final ids = validateDesktopTrackCopyIds(requestedIds);
+    final client = _catalogueClientFactory();
+    try {
+      final response = await client
+          .post(
+            credentials.origin.replace(
+              path: '/api/remote/library/tracks/lookup',
+            ),
+            headers: {
+              ..._headers(credentials),
+              'content-type': 'application/json',
+            },
+            body: jsonEncode({'ids': ids}),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (response.bodyBytes.length > 4 * 1024 * 1024) {
+        throw const FormatException(
+          'Desktop song lookup response was too large.',
+        );
+      }
+      if (response.statusCode == 400) {
+        final body = _decodeLookupBody(response.body);
+        final rawError = body?['error'];
+        final error = rawError is String && rawError.trim().isNotEmpty
+            ? rawError.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ').trim()
+            : 'The desktop rejected the song lookup.';
+        throw FormatException(
+          error.length > 300 ? error.substring(0, 300) : error,
+        );
+      }
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        throw StateError(
+          'The desktop rejected this pairing. Reconnect and retry.',
+        );
+      }
+      if (response.statusCode == 404) {
+        throw StateError(
+          'Update Lokal on your PC to copy selected song files.',
+        );
+      }
+      if (response.statusCode != 200) {
+        throw HttpException(
+          'Desktop song lookup failed (HTTP ${response.statusCode}).',
+        );
+      }
+      final body = _decodeLookupBody(response.body);
+      final rawItems = body?['items'];
+      if (rawItems is! List || rawItems.length > ids.length) {
+        throw const FormatException(
+          'Desktop song lookup response was invalid.',
+        );
+      }
+      final requested = ids.toSet();
+      final found = <String>{};
+      final items = <Map<String, dynamic>>[];
+      for (final raw in rawItems) {
+        if (raw is! Map) {
+          throw const FormatException(
+            'Desktop song lookup returned invalid track metadata.',
+          );
+        }
+        final track = Map<String, dynamic>.from(raw);
+        final id = track['id'];
+        if (id is! String || !requested.contains(id) || !found.add(id)) {
+          throw const FormatException(
+            'Desktop song lookup returned an unexpected track.',
+          );
+        }
+        items.add(track);
+      }
+      return items;
+    } finally {
+      client.close();
+    }
+  }
+
+  Map? _decodeLookupBody(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      return decoded is Map ? decoded : null;
+    } on FormatException {
+      return null;
+    }
+  }
+
   Future<void> copyOriginalToPhone(
     NetworkServerEntity server,
     Map<String, dynamic> track, {
@@ -647,12 +741,57 @@ class LokalDesktopSource extends NetworkSourceService {
     Map<String, dynamic> track, {
     Song? existing,
   }) async {
-    await _musicStorage.requireFolder();
-    final credentials = await _credentials(server);
     final id = track['id']?.toString();
     if (id == null || id.isEmpty) {
       throw const FormatException('Desktop song has no identifier.');
     }
+    final credentials = await _credentials(server);
+    final matching = await Database.songs
+        .filter()
+        .remoteServerIdEqualTo(server.id)
+        .remoteIdEqualTo(id)
+        .findAll();
+    SongEntity? downloadedOriginal;
+    for (final row in matching) {
+      if (isDownloadedDesktopOriginal(row)) {
+        downloadedOriginal = row;
+        break;
+      }
+    }
+    var copy = downloadedOriginal;
+    await copyDesktopOriginalAndSidecars(
+      hasDownloadedOriginal: downloadedOriginal != null,
+      copyAudio: () async {
+        copy = await _downloadOriginalToPhone(
+          server,
+          track,
+          id,
+          credentials,
+          matching,
+          existing: existing,
+        );
+      },
+      retrySidecars: () {
+        final copied = copy;
+        if (copied == null) {
+          throw StateError(
+            'Desktop original copy did not produce a library row.',
+          );
+        }
+        return _retryCopiedTrackSidecars(server, credentials, id, copied);
+      },
+    );
+  }
+
+  Future<SongEntity> _downloadOriginalToPhone(
+    NetworkServerEntity server,
+    Map<String, dynamic> track,
+    String id,
+    LokalRemoteCredentials credentials,
+    List<SongEntity> matching, {
+    Song? existing,
+  }) async {
+    await _musicStorage.requireFolder();
     final extension = track['fileType']?.toString().toLowerCase() ?? 'bin';
     if (!RegExp(r'^[a-z0-9]{1,8}$').hasMatch(extension)) {
       throw const FormatException('Invalid audio format.');
@@ -717,11 +856,6 @@ class LokalDesktopSource extends NetworkSourceService {
       // its local ID (and hence its likes/playlists/history) on original copy.
       // The preview's 'existing' can be null when the copy plan was refreshed.
       if (entity == null) {
-        final matching = await Database.songs
-            .filter()
-            .remoteServerIdEqualTo(server.id)
-            .remoteIdEqualTo(id)
-            .findAll();
         for (final candidate in matching) {
           if (isDownloadedDesktopOriginal(candidate)) {
             entity = candidate;
@@ -763,12 +897,29 @@ class LokalDesktopSource extends NetworkSourceService {
           await _putLibrarySong(row);
         },
       );
-      await _copyTrackClip(credentials, server.id, id, client);
-      await syncCopiedLyrics(server, copies: [saved]);
+      return saved;
     } finally {
       client.close();
       if (await part.exists()) await part.delete();
       if (await file.exists()) await file.delete();
+    }
+  }
+
+  Future<void> _retryCopiedTrackSidecars(
+    NetworkServerEntity server,
+    LokalRemoteCredentials credentials,
+    String trackId,
+    SongEntity copy,
+  ) async {
+    final client = GracefulHttpClient();
+    if (_iosLibraryMutations) _libraryTransfers.cancelOnPause(client.close);
+    try {
+      await retryDesktopTrackSidecars(
+        copyClip: () => _copyTrackClip(credentials, server.id, trackId, client),
+        syncLyrics: () => syncCopiedLyrics(server, copies: [copy]),
+      );
+    } finally {
+      client.close();
     }
   }
 
