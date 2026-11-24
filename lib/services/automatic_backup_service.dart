@@ -246,7 +246,7 @@ class AutomaticBackupService {
 
   Future<void> restore(Uint8List bytes) async {
     // Do not clear an existing library until every section has been checked.
-    final data = await Isolate.run(() => decodeBackup(bytes));
+    final data = decodeBackup(bytes);
     final songs = _rows(data, 'songs');
     final folders = _rows(data, 'folders');
     final artists = _rows(data, 'artists');

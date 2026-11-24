@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -115,9 +114,7 @@ class _AutomaticBackupSettingsTileState extends State<AutomaticBackupSettingsTil
         bytes.add(chunk);
       }
       final contents = bytes.takeBytes();
-      final preview = await Isolate.run(
-        () => AutomaticBackupService.decodeBackup(contents),
-      );
+      final preview = AutomaticBackupService.decodeBackup(contents);
       if (!mounted) return;
       final songs = (preview['songs'] as List).length;
       final listens = (preview['playEvents'] as List).length;

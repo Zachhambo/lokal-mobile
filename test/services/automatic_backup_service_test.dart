@@ -127,4 +127,27 @@ void main() {
       throwsFormatException,
     );
   });
+
+  test('backup decode does not depend on isolate message passing', () {
+    final backup = <String, Object>{
+      'format': 'lokal-mobile-backup',
+      'version': 1,
+      'exportedAt': '2026-11-24T09:58:20Z',
+      'preferences': <String, Object>{'playlists': '[]'},
+      'songs': <Object>[],
+      'folders': <Object>[],
+      'artists': <Object>[],
+      'recentlyPlayed': <Object>[],
+      'playEvents': <Object>[],
+      'libraryOps': <Object>[],
+    };
+    final bytes = Uint8List.fromList(
+      gzip.encode(utf8.encode(jsonEncode(backup))),
+    );
+
+    expect(
+      AutomaticBackupService.decodeBackup(bytes)['preferences'],
+      isA<Map<String, dynamic>>(),
+    );
+  });
 }
