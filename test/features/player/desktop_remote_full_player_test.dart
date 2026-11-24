@@ -6,6 +6,7 @@ import 'package:flick/features/player/screens/desktop_remote_full_player.dart';
 import 'package:flick/features/player/widgets/full_bleed_artwork_frame.dart';
 import 'package:flick/features/player/widgets/artwork_gradient_backdrop.dart';
 import 'package:flick/features/player/widgets/artwork_mesh_blur_backdrop.dart';
+import 'package:flick/features/player/widgets/player_song_blur_background.dart';
 import 'package:flick/features/player/widgets/player_artwork_image.dart';
 import 'package:flick/features/player/widgets/player_transport_controls.dart';
 import 'package:flick/features/player/widgets/song_stage_carousel.dart';
@@ -574,7 +575,10 @@ void main() {
         ],
         child: MaterialApp(
           theme: LokalTheme.build(LokalTokens.themes[LokalThemeId.dark]!),
-          home: DesktopRemoteFullPlayer(onClose: () {}),
+          home: DesktopRemoteFullPlayer(
+            onClose: () {},
+            heroTag: 'remote-sleeve-art',
+          ),
         ),
       ),
     );
@@ -588,6 +592,19 @@ void main() {
     expect(tester.getSize(cover).width, closeTo(342, 1));
     expect(tester.getSize(cover).height, closeTo(342, 1));
     expect(find.byType(FullBleedArtworkFrame), findsNothing);
+    expect(find.byType(PlayerSongBlurBackground), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(PlayerSongBlurBackground),
+        matching: find.byType(AnimatedSwitcher),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester.widgetList<Hero>(find.byType(Hero))
+          .where((hero) => hero.tag == 'remote-sleeve-art'),
+      hasLength(1),
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -610,7 +627,10 @@ void main() {
         ],
         child: MaterialApp(
           theme: LokalTheme.build(LokalTokens.themes[LokalThemeId.dark]!),
-          home: DesktopRemoteFullPlayer(onClose: () {}),
+          home: DesktopRemoteFullPlayer(
+            onClose: () {},
+            heroTag: 'remote-full-cover-art',
+          ),
         ),
       ),
     );
@@ -621,8 +641,21 @@ void main() {
     );
     expect(coverFrame.dimOnExpand, isFalse);
     expect(coverFrame.fadeOutCompletely, isTrue);
+    expect(find.byType(PlayerSongBlurBackground), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(PlayerSongBlurBackground),
+        matching: find.byType(AnimatedSwitcher),
+      ),
+      findsOneWidget,
+    );
     expect(find.byType(ArtworkGradientBackdrop), findsOneWidget);
     expect(find.byType(ArtworkMeshBlurBackdrop), findsOneWidget);
+    expect(
+      tester.widgetList<Hero>(find.byType(Hero))
+          .where((hero) => hero.tag == 'remote-full-cover-art'),
+      hasLength(1),
+    );
     expect(
       find.byKey(const ValueKey('remote-full-cover-spacer')),
       findsOneWidget,

@@ -1,9 +1,5 @@
 {
   "@@locale": "sv",
-  "aLittleRecordOfWhatStayed": "En liten beskrivning av vad som stannade på repeat.",
-  "@aLittleRecordOfWhatStayed": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:476"
-  },
   "aNewerFlickBuildIsOn": "En nyare Lokal-version finns i Play Butik.",
   "@aNewerFlickBuildIsOn": {
     "description": "lib/features/menu/screens/menu_screen.dart:1234"
@@ -3571,10 +3567,6 @@
   "keepTheSessionMovingOrHead": "Håll sessionen i rörelse eller gå direkt tillbaka till spelaren.",
   "@keepTheSessionMovingOrHead": {
     "description": "lib/features/menu/screens/menu_screen.dart:1313"
-  },
-  "keepYourReplay": "Behåll din repris.",
-  "@keepYourReplay": {
-    "description": "lib/features/recap/screens/listening_recap_screen.dart:465"
   },
   "keeping": "Hålla • {type} • {br}",
   "@keeping": {

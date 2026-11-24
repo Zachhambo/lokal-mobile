@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flick/models/audio_engine_type.dart';
@@ -173,7 +174,7 @@ class _UsbBitPerfectPromptState extends ConsumerState<UsbBitPerfectPrompt> {
           .setBitPerfectEnabled(true);
       _invalidateEngineProviders();
       if (!mounted) return;
-      _showEngagedSnackBar(status, promptKey, applied);
+      _showEngagedToast(status, promptKey, applied);
     } catch (e) {
       debugPrint('[USB] Auto-engage direct USB failed: $e');
       _engagedDeviceKey = null;
@@ -240,68 +241,50 @@ class _UsbBitPerfectPromptState extends ConsumerState<UsbBitPerfectPrompt> {
     }
     if (!mounted) return;
     _fallbackNoticeShown.add(key);
-    _showFallbackSnackBar();
+    _showFallbackToast();
   }
 
   Future<void> _retryDirectUsb() async {
-    final messenger = ScaffoldMessenger.of(context);
     final recovered = await ref
         .read(playerServiceProvider)
         .retryDirectUsbForCurrentDevice();
     if (!mounted) return;
-    messenger
-      ..removeCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            recovered
-                ? l10n.exclusiveUsbBitPerfectReEngaged
-                : l10n.exclusiveUsbIsStillUnavailableCheck,
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    LokalToast.show(
+      context,
+      recovered
+          ? l10n.exclusiveUsbBitPerfectReEngaged
+          : l10n.exclusiveUsbIsStillUnavailableCheck,
+    );
   }
 
-  void _showEngagedSnackBar(
+  void _showEngagedToast(
     Uac2DeviceStatus status,
     String promptKey,
     bool applied,
   ) {
-    ScaffoldMessenger.of(context)
-      ..removeCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            applied
-                ? l10n.bitPerfectUsbDacEnabledFor(status.device.productName)
-                : l10n.bitPerfectUsbDacCouldNot2(status.device.productName),
-          ),
-          behavior: SnackBarBehavior.floating,
-          action: SnackBarAction(
-            label: l10n.undo,
-            onPressed: () => unawaited(_declineAutoEngage(promptKey)),
-          ),
-        ),
-      );
+    LokalToast.show(
+      context,
+      applied
+          ? l10n.bitPerfectUsbDacEnabledFor(status.device.productName)
+          : l10n.bitPerfectUsbDacCouldNot2(status.device.productName),
+      duration: const Duration(seconds: 4),
+      actionLabel: l10n.undo,
+      onAction: () {
+        if (mounted) unawaited(_declineAutoEngage(promptKey));
+      },
+    );
   }
 
-  void _showFallbackSnackBar() {
-    ScaffoldMessenger.of(context)
-      ..removeCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            l10n.exclusiveUsbDroppedToTheAndroid,
-          ),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 8),
-          action: SnackBarAction(
-            label: l10n.retry,
-            onPressed: () => unawaited(_retryDirectUsb()),
-          ),
-        ),
-      );
+  void _showFallbackToast() {
+    LokalToast.show(
+      context,
+      l10n.exclusiveUsbDroppedToTheAndroid,
+      duration: const Duration(seconds: 8),
+      actionLabel: l10n.retry,
+      onAction: () {
+        if (mounted) unawaited(_retryDirectUsb());
+      },
+    );
   }
 
   void _invalidateEngineProviders() {

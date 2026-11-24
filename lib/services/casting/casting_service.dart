@@ -5,6 +5,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../../features/discovery/discovery_progressive_streams.dart';
+import '../../features/morneye/morneye_live_playback.dart';
 import '../../models/song.dart';
 import '../player_service.dart';
 import '../remote_source_service.dart';
@@ -30,6 +32,13 @@ import '../lyrics_service.dart';
 // panel shows the cast target and hardware keys drive it. DLNA targets are
 // additionally published as MediaRouter routes (native DlnaRouteProvider) so
 // One UI / output switchers see a real remote output.
+typedef _DlnaQueueItem = ({
+  Song song,
+  Object? occurrence,
+  String url,
+  String? artworkUrl,
+});
+
 class CastingService {
   CastingService._() {
     _listenChromecastEvents();
@@ -41,6 +50,21 @@ class CastingService {
   );
 
   final DlnaBackend _dlna = DlnaBackend();
+  final _dlnaItems = <_DlnaQueueItem>[];
+  Future<void>? _dlnaQueuePreparation;
+  bool _dlnaQueueUncertain = false;
+  int _dlnaRevision = 0;
+  int _sonosQueueId = 0;
+  int _dlnaPollRevision = 0;
+  bool _dlnaBusy = false;
+  bool _dlnaPollBusy = false;
+  String? _dlnaReceiverUri;
+  bool _dlnaWasPlaying = false;
+  Duration _dlnaLastPosition = Duration.zero;
+  Duration _dlnaLastDuration = Duration.zero;
+  Future<void> _dlnaSerial = Future.value();
+  String? _dlnaQueueKey;
+  bool _dlnaWantPlay = false;
   final ChromecastBackend _chromecast = ChromecastBackend();
 
   final ValueNotifier<List<CastDevice>> devicesNotifier =
@@ -66,6 +90,13 @@ class CastingService {
   int _loadRevision = 0;
   int _sourceRevision = 0;
   int _sourcePreparations = 0;
+  final isPreparingNotifier = ValueNotifier<bool>(false);
+
+  void _syncPreparationState() {
+    isPreparingNotifier.value =
+        _sourcePreparations > 0 || _pendingCastLoadId != null;
+  }
+
   String? _pendingCastLoadId;
   Map<String, dynamic>? _lastCcStatus;
   int _presentationRevision = 0;
@@ -96,18 +127,15 @@ class CastingService {
         try {
           return await run();
         } catch (error) {
-          if (!Platform.isIOS) rethrow;
           failures.add(error);
           return const [];
         }
       }
 
-      final results = await Future.wait<dynamic>([
+      final [dlna, cc] = await Future.wait([
         scan(() => _dlna.discover(timeout: timeout)),
         scan(_chromecast.discover),
       ]);
-      final dlna = results[0] as List<CastDevice>;
-      final cc = results[1] as List<CastDevice>;
       devicesNotifier.value = [...dlna, ...cc];
       _publishDlnaRoutes(dlna);
       if (failures.isNotEmpty) {
@@ -136,11 +164,14 @@ class CastingService {
   }
 
   Future<void> connect(CastDevice device) async {
+    if (device.backend == CastBackend.dlna) return _connectDlna(device);
     if ((Platform.isIOS || Platform.isAndroid) &&
         device.backend == CastBackend.chromecast) {
       return _connectChromecast(device);
     }
     if (_activeDevice?.id == device.id) return;
+    if (device.backend == CastBackend.dlna)
+      device = await _dlna.coordinator(device);
     final ps = PlayerService();
     final wasPlaying = ps.isPlayingNotifier.value;
     final resumeSong = ps.currentSongNotifier.value;
@@ -158,50 +189,139 @@ class CastingService {
       // Chromecast can disappear while still playing. A DLNA switch may
       // proceed, but only a confirmed STOP can auto-start the new receiver.
       final previousReceiverStopped = previousWasChromecast
-          ? await ps.runOutputTransition((_) =>
-              _disconnectChromecast(allowUnconfirmedDetach: true))
+          ? await ps.runOutputTransition(
+              (_) => _disconnectChromecast(allowUnconfirmedDetach: true),
+            )
           : true;
       if (!previousWasChromecast) {
         await disconnect(resumeLocal: false);
       }
       _wasPlayingBeforeCast = wasPlaying;
 
-    // Pause while the local transport still owns playback. Once _activeDevice
-    // is set, PlayerService.pause() delegates to the cast receiver instead,
-    // leaving the phone's audio engine playing during the handoff (#434).
-    // Do this even if the UI reports paused: it also settles a stale engine.
-    await ps.pause();
+      // Pause while the local transport still owns playback. Once _activeDevice
+      // is set, PlayerService.pause() delegates to the cast receiver instead,
+      // leaving the phone's audio engine playing during the handoff (#434).
+      // Do this even if the UI reports paused: it also settles a stale engine.
+      await ps.pause();
 
-    _activeDevice = device;
-    activeDeviceNotifier.value = device;
-    isActiveNotifier.value = true;
-    remoteVolumeNotifier.value = null;
+      _activeDevice = device;
+      activeDeviceNotifier.value = device;
+      isActiveNotifier.value = true;
+      remoteVolumeNotifier.value = null;
 
-    if (device.backend == CastBackend.chromecast) {
-      await _chromecast.connect(device);
-      final v = await _chromecast.getVolume();
-      if (v != null && v >= 0) remoteVolumeNotifier.value = v.clamp(0.0, 1.0);
-    } else {
-      _selectDlnaRoute(device);
-    }
-
-    if (wasPlaying && resumeSong != null) {
-      await delegatePlay(
-        resumeSong,
-        autoplay: previousReceiverStopped,
-      );
-      if (resumePosition.inSeconds > 3) {
-        await delegateSeek(resumePosition);
+      if (device.backend == CastBackend.chromecast) {
+        await _chromecast.connect(device);
+        final v = await _chromecast.getVolume();
+        if (v != null && v >= 0) remoteVolumeNotifier.value = v.clamp(0.0, 1.0);
+      } else {
+        _selectDlnaRoute(device);
       }
-    }
-    if (!previousReceiverStopped) {
-      errorNotifier.value =
-          'The previous receiver did not confirm Stop. This output is paused to avoid simultaneous playback.';
-    }
 
-    unawaited(ps.refreshNotificationState());
+      if (resumeSong != null) {
+        await delegatePlay(
+          resumeSong,
+          autoplay: wasPlaying && previousReceiverStopped,
+        );
+        if (resumePosition.inSeconds > 3) {
+          await delegateSeek(resumePosition);
+        }
+      }
+      if (!previousReceiverStopped) {
+        errorNotifier.value = 'The previous receiver did not confirm Stop. This output is paused to avoid simultaneous playback.';
+      }
+
+      unawaited(ps.refreshNotificationState());
     } finally {
       if (previousWasChromecast) isChangingOutputNotifier.value = false;
+    }
+  }
+
+  Future<void> _connectDlna(CastDevice requested) async {
+    if (_activeDevice?.id == requested.id) return;
+    if (isChangingOutputNotifier.value) {
+      throw PlatformException(
+        code: 'CAST_BUSY',
+        message: 'Wait for the current output change.',
+      );
+    }
+    isChangingOutputNotifier.value = true;
+    final ps = PlayerService();
+    var selected = requested;
+    var touched = false;
+    var claimed = false;
+    var previousStopped = true;
+    try {
+      await ps.runOutputTransition((local) async {
+        if (_activeDevice?.backend == CastBackend.chromecast) {
+          previousStopped = await _disconnectChromecast(
+            allowUnconfirmedDetach: true,
+          );
+        } else {
+          await disconnect(resumeLocal: false);
+        }
+        await handoffToCast(
+          local: local,
+          allowAutoPlay: previousStopped,
+          connect: () async {
+            selected = await _dlna.coordinator(requested);
+            // Internal staging ownership only; the picker is published on commit.
+            _activeDevice = selected;
+          },
+          preparePaused: () async {
+            await _loadDlnaSong(
+              local.song!,
+              autoplay: false,
+              prepareAhead: false,
+              onReceiverTouched: () => touched = true,
+            );
+            if (local.position > Duration.zero)
+              await _dlna.seek(selected.controlUrl!, local.position);
+          },
+          play: () => _dlna.play(selected.controlUrl!),
+          disconnect: () async {
+            _dlnaRevision++;
+            await _dlnaSerial;
+            if (touched) await _dlna.stop(selected.controlUrl!);
+            _pollTimer?.cancel();
+            _clearDlnaQueueState();
+            if (!claimed) {
+              _activeDevice = null;
+              _currentSong = null;
+              if (local.isCurrent())
+                ps.isPlayingNotifier.value = local.wasPlaying;
+            }
+            await CastContentServer.instance.stop();
+          },
+          claimRemote: () {
+            claimed = true;
+            _claimCastRemote(selected, local.song, local.position, false);
+            _selectDlnaRoute(selected);
+          },
+          releaseRemote: _releaseCastRemote,
+        );
+        _dlnaWantPlay =
+            previousStopped && local.wasPlaying && local.song != null;
+        ps.isPlayingNotifier.value = _dlnaWantPlay;
+        _wasPlayingBeforeCast = local.wasPlaying;
+        unawaited(
+          _refreshDlnaQueue().catchError((Object error) {
+            if (identical(selected, _activeDevice))
+              errorNotifier.value =
+                  'Could not prepare the receiver queue: $error';
+          }),
+        );
+        if (!previousStopped) errorNotifier.value = 'The previous receiver did not confirm Stop. This output is paused.';
+        try {
+          final v = await _dlna.deviceVolume(selected);
+          if (v != null) remoteVolumeNotifier.value = v / 100;
+        } catch (_) {}
+      });
+    } on CastHandoffUncertain {
+      errorNotifier.value = 'Receiver shutdown is unconfirmed. Retry Stop casting before returning to local audio.';
+      rethrow;
+    } finally {
+      isChangingOutputNotifier.value = false;
+      unawaited(ps.refreshNotificationState());
     }
   }
 
@@ -215,8 +335,10 @@ class CastingService {
       return _chromecast.selectOutputRoute(routeId);
     }
     if (isChangingOutputNotifier.value) {
-      throw PlatformException(code: 'CAST_BUSY',
-          message: 'Wait for the current output change.');
+      throw PlatformException(
+        code: 'CAST_BUSY',
+        message: 'Wait for the current output change.',
+      );
     }
     isChangingOutputNotifier.value = true;
     try {
@@ -225,15 +347,16 @@ class CastingService {
           allowUnconfirmedDetach: true,
         );
         final selected = await _chromecast.selectOutputRoute(routeId);
-        if (selected && stoppedReceiver && local.wasPlaying &&
+        if (selected &&
+            stoppedReceiver &&
+            local.wasPlaying &&
             local.isCurrent()) {
           // The local engine may still be parked at the pre-Cast playhead.
           // Seek before resuming so it cannot briefly play the old position.
           await PlayerService().seek(local.position);
           if (local.isCurrent()) await local.resumeLocal();
         } else if (!stoppedReceiver) {
-          errorNotifier.value =
-              'Returned to local output paused. The previous receiver may still be playing.';
+          errorNotifier.value = 'Returned to local output paused. The previous receiver may still be playing.';
         }
         return selected;
       });
@@ -243,7 +366,10 @@ class CastingService {
     }
   }
 
-  Future<void> disconnect({bool resumeLocal = true, bool leaveReceiver = false}) async {
+  Future<void> disconnect({
+    bool resumeLocal = true,
+    bool leaveReceiver = false,
+  }) async {
     if ((Platform.isIOS || Platform.isAndroid) &&
         _activeDevice?.backend == CastBackend.chromecast) {
       if (isChangingOutputNotifier.value) {
@@ -260,7 +386,10 @@ class CastingService {
           );
           // A lost/abandoned receiver may continue playing independently.
           // Never auto-start the phone unless STOP was acknowledged.
-          if (resumeLocal && stoppedReceiver && local.wasPlaying && local.isCurrent()) {
+          if (resumeLocal &&
+              stoppedReceiver &&
+              local.wasPlaying &&
+              local.isCurrent()) {
             await local.resumeLocal();
             // A paused attached engine can resume the same recording at its
             // pre-Cast position. Restore the receiver's captured position too.
@@ -277,11 +406,27 @@ class CastingService {
       return;
     }
     if (_activeDevice == null) return;
+    final leavingDlna = _activeDevice!.backend == CastBackend.dlna;
+    if (leavingDlna) {
+      _dlnaRevision++;
+      await _dlnaSerial;
+    }
+    if (leavingDlna && !leaveReceiver && _activeDevice!.controlUrl != null) {
+      try {
+        await _dlna.stop(_activeDevice!.controlUrl!);
+      } catch (_) {
+        errorNotifier.value = 'Receiver shutdown is unconfirmed. Retry Stop casting, or explicitly leave the receiver.';
+        rethrow;
+      }
+    }
+    _clearDlnaQueueState();
     _tearingDown = true;
     _pollTimer?.cancel();
     _pollTimer = null;
 
-    final wasPlaying = _wasPlayingBeforeCast;
+    final wasPlaying = leavingDlna
+        ? PlayerService().isPlayingNotifier.value
+        : _wasPlayingBeforeCast;
     _wasPlayingBeforeCast = false;
     final dev = _activeDevice!;
     currentCastLoadId = null;
@@ -301,11 +446,6 @@ class CastingService {
       if (dev.backend == CastBackend.chromecast) {
         await _chromecast.disconnect();
       } else {
-        if (dev.controlUrl != null) {
-          try {
-            await _dlna.stop(dev.controlUrl!);
-          } catch (_) {}
-        }
         _unselectDlnaRoute();
       }
       await CastContentServer.instance.stop();
@@ -314,15 +454,20 @@ class CastingService {
     }
 
     final ps = PlayerService();
-    if (resumeLocal && wasPlaying && ps.currentSongNotifier.value != null) {
+    if (resumeLocal &&
+        !leaveReceiver &&
+        wasPlaying &&
+        ps.currentSongNotifier.value != null) {
       // Local engine may hold a stale track after remote-side song changes;
       // replay the current song so resume lands on what the UI shows.
       final song = ps.currentSongNotifier.value!;
       final pos = ps.positionNotifier.value;
-      unawaited(ps.play(song));
+      await ps.play(song);
       if (pos.inSeconds > 3) {
-        unawaited(ps.seek(pos).then((_) => ps.resume()).catchError((_) {}));
+        await ps.seek(pos);
       }
+    } else if (leavingDlna) {
+      ps.isPlayingNotifier.value = false;
     }
     unawaited(ps.refreshNotificationState());
   }
@@ -358,6 +503,7 @@ class CastingService {
     activeDeviceNotifier.value = null;
     isActiveNotifier.value = false;
     remoteVolumeNotifier.value = null;
+    PlayerService().isBufferingNotifier.value = false;
     PlayerService().isPlayingNotifier.value = false;
   }
 
@@ -433,9 +579,7 @@ class CastingService {
         );
         ps.isPlayingNotifier.value =
             previousReceiverStopped && local.wasPlaying && local.song != null;
-        errorNotifier.value = previousReceiverStopped
-            ? null
-            : 'The previous receiver did not confirm Stop. This receiver is paused to avoid playing on both. Stop the previous receiver separately if necessary.';
+        errorNotifier.value = previousReceiverStopped ? null : 'The previous receiver did not confirm Stop. This receiver is paused to avoid playing on both. Stop the previous receiver separately if necessary.';
         if (local.song != null) unawaited(_presentReceiverSong(local.song!));
         // A volume query is ancillary; its failure cannot undo a confirmed load.
         try {
@@ -495,8 +639,8 @@ class CastingService {
     // Temporary SDK suspension must not immediately steal remote ownership.
     _ccSuspensionTimer = Timer(const Duration(seconds: 10), () {
       unawaited(() async {
-        if (revision != _ccSessionRevision ||
-            !identical(_activeDevice, device)) return;
+        if (revision != _ccSessionRevision || !identical(_activeDevice, device))
+          return;
         if (!(await _nativeCastConnected()) &&
             revision == _ccSessionRevision &&
             identical(_activeDevice, device)) {
@@ -514,13 +658,13 @@ class CastingService {
     final sessionRevision = _ccSessionRevision;
     if (device?.backend != CastBackend.chromecast ||
         _tearingDown ||
-        isChangingOutputNotifier.value) return;
+        isChangingOutputNotifier.value)
+      return;
     // Release in PlayerService's queue, *not* the native event callback, so a
     // delayed end event cannot release a replacement receiver or selection.
     unawaited(
       recoverLostCastSession(
-        serialize: (work) =>
-            PlayerService().runOutputTransition((_) => work()),
+        serialize: (work) => PlayerService().runOutputTransition((_) => work()),
         stillOwnsSession: () =>
             identical(_activeDevice, device) &&
             sessionRevision == _ccSessionRevision &&
@@ -528,9 +672,7 @@ class CastingService {
             !isChangingOutputNotifier.value,
         releaseRemote: () {
           _releaseCastRemote();
-          errorNotifier.value = shutdownConfirmed
-              ? null
-              : 'Cast connection lost. Playback on the receiver may continue; stop it there if needed.';
+          errorNotifier.value = shutdownConfirmed ? null : 'Cast connection lost. Playback on the receiver may continue; stop it there if needed.';
         },
         cleanup: () async {
           try {
@@ -547,10 +689,10 @@ class CastingService {
         if (!identical(_activeDevice, device) ||
             sessionRevision != _ccSessionRevision ||
             _tearingDown ||
-            isChangingOutputNotifier.value) return;
+            isChangingOutputNotifier.value)
+          return;
         debugPrint('[Cast] Lost-session recovery failed: $error');
-        errorNotifier.value =
-            'Cast disconnected. Retrying return to this device; playback may still continue on the receiver.';
+        errorNotifier.value = 'Cast disconnected. Retrying return to this device; playback may still continue on the receiver.';
         if (retryAttempt < 3) {
           Timer(Duration(seconds: 1 << retryAttempt), () {
             if (identical(_activeDevice, device) &&
@@ -621,6 +763,10 @@ class CastingService {
   // Called by PlayerService._playInternal hook. Returns true if handled.
   Future<bool> delegatePlay(Song song, {bool autoplay = true}) async {
     if (_activeDevice == null) return false;
+    if (_activeDevice!.backend == CastBackend.dlna) {
+      await _loadDlnaSong(song, autoplay: autoplay);
+      return true;
+    }
     final ps = PlayerService();
     final String? url;
     if ((Platform.isIOS || Platform.isAndroid) &&
@@ -681,6 +827,7 @@ class CastingService {
     final previousStatus = _lastCcStatus;
     currentCastLoadId = loadId;
     _pendingCastLoadId = loadId;
+    _syncPreparationState();
     _lastCcStatus = null;
     _completion.begin(loadId);
     try {
@@ -735,11 +882,13 @@ class CastingService {
           _completion.clear();
           _currentSong = null;
           _lastCcStatus = null;
+          PlayerService().isBufferingNotifier.value = false;
         }
       }
       rethrow;
     } finally {
       if (_pendingCastLoadId == loadId) _pendingCastLoadId = null;
+      _syncPreparationState();
     }
   }
 
@@ -808,17 +957,28 @@ class CastingService {
   Future<void> delegatePause() async {
     if (_activeDevice == null) return;
     if (_activeDevice!.backend == CastBackend.dlna) {
-      await _dlna.pause(_activeDevice!.controlUrl!);
+      _dlnaPollRevision++;
+      _dlnaWantPlay = false;
+      await _serializeDlna(() async {
+        if (_activeDevice?.backend == CastBackend.dlna)
+          await _dlna.pause(_activeDevice!.controlUrl!);
+      });
     } else if (_lastCcStatus?['finished'] != true) {
       await _chromecast.pause();
     }
+    PlayerService().isBufferingNotifier.value = false;
     PlayerService().isPlayingNotifier.value = false;
   }
 
   Future<void> delegateResume() async {
     if (_activeDevice == null) return;
     if (_activeDevice!.backend == CastBackend.dlna) {
-      await _dlna.play(_activeDevice!.controlUrl!);
+      _dlnaPollRevision++;
+      _dlnaWantPlay = true;
+      await _serializeDlna(() async {
+        if (_activeDevice?.backend == CastBackend.dlna)
+          await _dlna.play(_activeDevice!.controlUrl!);
+      });
     } else {
       await _chromecast.resume();
     }
@@ -831,6 +991,7 @@ class CastingService {
     // previous track here would invalidate the pending replacement source.
     if (_sourcePreparations > 0 || _pendingCastLoadId != null) return;
     if (_activeDevice!.backend == CastBackend.dlna) {
+      _dlnaPollRevision++;
       await _dlna.seek(_activeDevice!.controlUrl!, position);
     } else if (_lastCcStatus?['finished'] == true && _currentSong != null) {
       final song = _currentSong!;
@@ -846,7 +1007,14 @@ class CastingService {
   Future<void> delegateStop() async {
     if (_activeDevice == null) return;
     if (_activeDevice!.backend == CastBackend.dlna) {
-      await _dlna.stop(_activeDevice!.controlUrl!);
+      _dlnaWantPlay = false;
+      _dlnaRevision++;
+      _completion.clear();
+      _dlnaWasPlaying = false;
+      await _serializeDlna(() async {
+        if (_activeDevice?.backend == CastBackend.dlna)
+          await _dlna.stop(_activeDevice!.controlUrl!);
+      });
     } else {
       await _disconnectChromecast();
     }
@@ -856,9 +1024,12 @@ class CastingService {
     if (_activeDevice == null) return;
     final v = volume.clamp(0.0, 1.0);
     if (_activeDevice!.backend == CastBackend.dlna) {
-      final rc = _activeDevice!.renderingControlUrl;
-      if (rc == null) return;
-      await _dlna.setVolume(rc, (v * 100).round().clamp(0, 100));
+      final device = _activeDevice!;
+      _dlnaPollRevision++;
+      if (device.renderingControlUrl == null &&
+          device.groupRenderingControlUrl == null)
+        return;
+      await _dlna.setDeviceVolume(device, (v * 100).round().clamp(0, 100));
     } else {
       await _chromecast.setVolume(v);
     }
@@ -901,7 +1072,8 @@ class CastingService {
           activeDeviceId: _activeDevice?.backend == CastBackend.chromecast
               ? _activeDevice?.id
               : null,
-        )) return;
+        ))
+          return;
         switch (event) {
           case 'sessionStarted':
           case 'sessionResumed':
@@ -1016,7 +1188,8 @@ class CastingService {
         }
       } catch (error) {
         if (identical(device, _activeDevice)) {
-          errorNotifier.value = 'Could not change songs on the receiver. Try again.';
+          errorNotifier.value =
+              'Could not change songs on the receiver. Try again.';
         }
       } finally {
         _receiverSkipInFlight = false;
@@ -1037,13 +1210,18 @@ class CastingService {
       return;
     _lastCcStatus = Map.of(e);
     _drainCastCompletion();
-    if (e['finished'] == true) return;
+    if (e['finished'] == true) {
+      ps.isBufferingNotifier.value = false;
+      return;
+    }
     if (e['sourceError'] == true) {
       errorNotifier.value =
           'The receiver could not play this audio format or reach its source.';
+      ps.isBufferingNotifier.value = false;
       ps.isPlayingNotifier.value = false;
       return;
     }
+    ps.isBufferingNotifier.value = e['buffering'] == true;
     final position = (e['position'] as num?)?.toInt();
     final duration = (e['duration'] as num?)?.toInt();
     final playing = e['playing'] as bool?;
@@ -1061,7 +1239,7 @@ class CastingService {
     final ps = PlayerService();
     final event = _completion.takePending(
       ready:
-          _activeDevice?.backend == CastBackend.chromecast &&
+          _activeDevice != null &&
           !isChangingOutputNotifier.value &&
           _pendingCastLoadId == null &&
           song != null &&
@@ -1093,6 +1271,7 @@ class CastingService {
   Future<String?> _receiverCastUrl(Song song) async {
     final revision = ++_sourceRevision;
     _sourcePreparations++;
+    _syncPreparationState();
     bool current() => revision == _sourceRevision && !_tearingDown;
     try {
       final source = _resolveReceiverCastUrl(song, current);
@@ -1105,6 +1284,7 @@ class CastingService {
       );
     } finally {
       _sourcePreparations--;
+      _syncPreparationState();
     }
   }
 
@@ -1112,6 +1292,26 @@ class CastingService {
     Song song,
     bool Function() current,
   ) async {
+    if (song.sourcePackage == 'konnekted.progressive') {
+      final upstream = DiscoveryProgressiveStreams.instance.resolve(song.filePath);
+      if (upstream == null) return null;
+      return CastContentServer.instance.relayOnline(
+        upstream,
+        filename: castProgressiveFilename(upstream, song.fileType),
+        stillCurrent: current,
+      );
+    }
+    if (song.sourcePackage == 'konnekted.morneye-live') {
+      final session = MorneyeLiveRegistry.instance.resolve(song.filePath);
+      if (session == null) return null;
+      final path = await session.completeFile.timeout(const Duration(seconds: 45));
+      if (!current()) throw const CastHandoffCancelled();
+      return CastContentServer.instance.serve(
+        path,
+        filename: castProgressiveFilename(Uri.file(path), song.fileType),
+        stillCurrent: current,
+      );
+    }
     final resolved = await RemoteSourceService.instance.resolveHttpPlayback(
       song,
     );
@@ -1146,6 +1346,7 @@ class CastingService {
       if (song.isNetworkSource) {
         path = await RemoteSourceService.instance.ensureLocal(song);
       } else {
+        await CastContentServer.instance.syncStagingProtection();
         path = await castLocalFile(song.filePath, extension: song.fileType);
       }
       if (path == null || !(stillCurrent?.call() ?? true)) return null;
@@ -1170,19 +1371,484 @@ class CastingService {
     _pollTimer?.cancel();
     var tick = 0;
     _pollTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
-      if (_activeDevice == null) return;
-      final info = await _dlna.getPosition(controlUrl);
-      if (info == null) return;
+      final device = _activeDevice;
+      if (device?.backend != CastBackend.dlna ||
+          isChangingOutputNotifier.value ||
+          _dlnaBusy ||
+          _dlnaPollBusy)
+        return;
+      _dlnaPollBusy = true;
+      final revision = _dlnaRevision;
+      final pollRevision = _dlnaPollRevision;
       final ps = PlayerService();
-      ps.positionNotifier.value = info.position;
-      if (info.duration.inMilliseconds > 0) {
-        ps.durationNotifier.value = info.duration;
+      final playbackRevision = ps.playbackRequestRevision;
+      bool current() =>
+          identical(device, _activeDevice) &&
+          revision == _dlnaRevision &&
+          pollRevision == _dlnaPollRevision &&
+          playbackRevision == ps.playbackRequestRevision;
+      try {
+        final info = await _dlna.getPosition(controlUrl);
+        if (!current() || _dlnaBusy) return;
+        if (info == null) {
+          if (++_dlnaFailures >= 4) {
+            errorNotifier.value = 'The receiver is unreachable. Retry, or leave casting to return to this device paused.';
+          }
+          return;
+        }
+        _dlnaFailures = 0;
+        final sameSource = CastContentServer.instance.sameSource;
+        bool matches(String url) =>
+            sameSource(url, info.uri) ||
+            (device!.isSonos && info.resourceUri != null &&
+                sameSource(url, info.resourceUri!));
+        final entry = device!.isSonos && info.track > 0
+            ? (info.track <= _dlnaItems.length
+                  ? _dlnaItems[info.track - 1]
+                  : null)
+            : _dlnaItems.where((e) => sameSource(e.url, info.uri)).firstOrNull;
+        final matched = entry != null && matches(entry.url);
+        if (matched) {
+          final occurrence = entry.occurrence;
+          if (occurrence != null &&
+              (!identical(occurrence, ps.castPlaylistOccurrence(ps.currentIndex)) ||
+                  entry.url != _dlnaReceiverUri)) {
+            final followed = await ps.followCastPlaylistTrack(
+              occurrence,
+              entry.song,
+              stillCurrent: current,
+              position: info.position,
+              playing: info.playing,
+            );
+            if (!current()) return;
+            if (!followed) {
+              errorNotifier.value =
+                  'The receiver advanced to an item that changed in Lokal. Select a track to resync.';
+              return;
+            }
+            _currentSong = ps.currentSongNotifier.value;
+            currentCastLoadId = 'dlna:${++_loadRevision}';
+            _completion.loaded(currentCastLoadId!);
+            _dlnaQueueKey = null;
+          }
+        } else if (info.uri.isNotEmpty &&
+            (info.state == 'PLAYING' || info.state == 'PAUSED_PLAYBACK')) {
+          if (!_dlnaQueueUncertain) {
+            errorNotifier.value =
+                'Playback was changed by another controller. Reconnect to send Lokal’s queue again.';
+          }
+          return;
+        }
+        _dlnaReceiverUri = matched ? entry.url : info.uri;
+        ps.positionNotifier.value = info.position;
+        if (info.duration.inMilliseconds > 0) {
+          ps.durationNotifier.value = info.duration;
+        }
+        ps.isPlayingNotifier.value = info.playing;
+        // Volume poll is half-rate; each tick is already 2 SOAP calls.
+        if ((renderingControlUrl != null ||
+                device.groupRenderingControlUrl != null) &&
+            tick++ % 2 == 0) {
+          final v = await _dlna.deviceVolume(device);
+          if (v != null && current()) remoteVolumeNotifier.value = v / 100.0;
+        }
+        if (!current()) return;
+        final finished =
+            info.state == 'STOPPED' &&
+            _dlnaWasPlaying &&
+            _dlnaLastDuration > Duration.zero &&
+            _dlnaLastPosition >= _dlnaLastDuration - const Duration(seconds: 3);
+        _dlnaWasPlaying = info.playing;
+        _dlnaLastPosition = info.position;
+        _dlnaLastDuration = info.duration;
+        if (finished && currentCastLoadId != null) {
+          _completion.observe({
+            'finished': true,
+            'trackId': _currentSong?.id,
+            'loadId': currentCastLoadId,
+          });
+          _drainCastCompletion();
+        } else if (!_dlnaBusy && info.state != 'STOPPED') {
+          unawaited(
+            _refreshDlnaQueue().catchError((Object error) {
+              if (identical(device, _activeDevice))
+                errorNotifier.value =
+                    'Could not prepare the receiver queue: $error';
+            }),
+          );
+        }
+      } catch (error) {
+        if (current())
+          errorNotifier.value = 'Could not refresh receiver status: $error';
+      } finally {
+        _dlnaPollBusy = false;
       }
-      ps.isPlayingNotifier.value = info.playing;
-      // Volume poll is half-rate; each tick is already 2 SOAP calls.
-      if (renderingControlUrl != null && tick++ % 2 == 0) {
-        final v = await _dlna.getVolume(renderingControlUrl);
-        if (v != null) remoteVolumeNotifier.value = v / 100.0;
+    });
+  }
+
+  int _dlnaFailures = 0;
+
+  Future<void> _serializeDlna(Future<void> Function() work) {
+    final next = _dlnaSerial.then((_) => work());
+    _dlnaSerial = next.catchError((Object _) {});
+    return next;
+  }
+
+  void _clearDlnaQueueState() {
+    _dlnaRevision++;
+    _dlnaItems.clear();
+    _dlnaQueueUncertain = false;
+    _dlnaQueuePreparation = null;
+    _dlnaReceiverUri = null;
+    _dlnaQueueKey = null;
+    _dlnaWasPlaying = false;
+    _dlnaFailures = 0;
+  }
+
+  Future<_DlnaQueueItem> _prepareDlna(
+    CastDevice device,
+    Song song,
+    Object? occurrence,
+    bool Function() current,
+  ) async {
+    final online =
+        const {
+          'konnekted.progressive',
+          'konnekted.morneye-live',
+          'konnekted.discovery',
+        }.contains(song.sourcePackage);
+    final url = await _resolveReceiverCastUrl(
+      song,
+      current,
+    ).timeout(Duration(seconds: online ? 45 : 20));
+    if (!current()) throw const CastHandoffCancelled();
+    if (url == null)
+      throw StateError('This track cannot be sent to the receiver.');
+    // Online playback relays work in the foreground. Keep ordinary files on
+    // the native AirPlay path on iOS if they require this device to host them.
+    if (Platform.isIOS && !online && CastContentServer.instance.ownsUrl(url)) {
+      throw StateError(
+        'Use AirPlay for phone-hosted tracks on iPhone/iPad so playback can continue with the screen locked.',
+      );
+    }
+    String? art;
+    try {
+      if (device.isSonos && CastContentServer.instance.ownsFileUrl(url)) {
+        art = await _dlna.speakerArtwork(device.controlUrl!, url);
+      }
+      if (current()) {
+        art ??= await castArtwork(
+          song,
+          stillCurrent: current,
+          preferJpeg: true,
+        ).timeout(const Duration(seconds: 5));
+      }
+    } catch (_) {}
+    if (!current()) throw const CastHandoffCancelled();
+    return (
+      song: song,
+      occurrence: occurrence,
+      url: url,
+      artworkUrl: art,
+    );
+  }
+
+  String _dlnaMetadata(_DlnaQueueItem item, {int? sonosQueueId}) =>
+      DlnaBackend.metadata(
+        item.url,
+        title: item.song.title,
+        artist: item.song.artist,
+        album: item.song.album,
+        artworkUrl: item.artworkUrl,
+        contentType: castAudioContentType(item.url, item.song.fileType),
+        sonosQueueId: sonosQueueId,
+        duration: item.song.duration,
+      );
+
+  // Allocate the DIDL ID at insertion time, even if a prepared item is reused.
+  Future<void> _enqueueSonos(String control, _DlnaQueueItem item) async {
+    final expected = _dlnaItems.length + 1;
+    final index = await _dlna.enqueue(
+      control,
+      item.url,
+      _dlnaMetadata(item, sonosQueueId: ++_sonosQueueId),
+      position: expected == 1 ? 1 : 0,
+    );
+    if (index != null && index != expected) {
+      throw StateError('Sonos added the track at an unexpected queue position.');
+    }
+  }
+
+  Future<void> _loadDlnaSong(
+    Song song, {
+    required bool autoplay,
+    bool prepareAhead = true,
+    void Function()? onReceiverTouched,
+  }) {
+    final revision = ++_dlnaRevision;
+    _dlnaWantPlay = autoplay;
+    return _serializeDlna(() async {
+      final device = _activeDevice;
+      bool current() =>
+          device != null &&
+          identical(device, _activeDevice) &&
+          revision == _dlnaRevision &&
+          !_tearingDown;
+      if (!current()) return;
+      _dlnaBusy = true;
+      _sourcePreparations++;
+      _syncPreparationState();
+      unawaited(PlayerService().refreshNotificationState());
+      try {
+        final ps = PlayerService();
+        final control = device!.controlUrl!;
+        final occurrence = ps.castPlaylistOccurrence(ps.currentIndex);
+        final held = _dlnaQueueUncertain
+            ? -1
+            : _dlnaItems.indexWhere(
+                (e) => identical(e.occurrence, occurrence) &&
+                    e.song.id == song.id &&
+                    !shouldReplaceQueuedAudioSource(e.song, song),
+              );
+        final item = held >= 0
+            ? _dlnaItems[held]
+            : await _prepareDlna(device, song, occurrence, current);
+        if (!current()) return;
+        onReceiverTouched?.call();
+        if (device.isSonos && held >= 0) {
+          await _dlna.seekTrack(control, held + 1);
+        } else if (device.isSonos) {
+          await _dlna.stop(control);
+          if (!current()) return;
+          _dlnaQueueUncertain = true;
+          await _dlna.clearQueue(control);
+          _dlnaItems.clear();
+          await _enqueueSonos(control, item);
+          _dlnaItems.add(item);
+          await _dlna.queueSource(device);
+          await _dlna.seekTrack(control, 1);
+          _dlnaQueueUncertain = false;
+        } else {
+          await _dlna.setMetadataUri(control, item.url, _dlnaMetadata(item));
+          _dlnaItems
+            ..clear()
+            ..add(item);
+        }
+        if (!current()) return;
+        final shouldPlay = _dlnaWantPlay;
+        if (shouldPlay) {
+          await _dlna.play(control);
+        } else if (device.isSonos && held >= 0) {
+          await _dlna.pause(control);
+        }
+        if (!current()) return;
+        _dlnaReceiverUri = item.url;
+        _currentSong = song;
+        currentCastLoadId = 'dlna:${++_loadRevision}';
+        _completion.loaded(currentCastLoadId!);
+        _dlnaQueueKey = null;
+        _dlnaLastPosition = Duration.zero;
+        _dlnaLastDuration = song.duration;
+        _dlnaWasPlaying = shouldPlay;
+        ps.currentSongNotifier.value = song;
+        ps.durationNotifier.value = song.duration;
+        ps.positionNotifier.value = Duration.zero;
+        ps.isPlayingNotifier.value = shouldPlay;
+        errorNotifier.value = null;
+        _startDlnaPolling(control, device.renderingControlUrl);
+      } finally {
+        _dlnaBusy = false;
+        _sourcePreparations--;
+        _syncPreparationState();
+        unawaited(PlayerService().refreshNotificationState());
+      }
+      if (prepareAhead && current()) {
+        unawaited(_refreshDlnaQueue().catchError((Object error) {
+          if (current()) {
+            errorNotifier.value =
+                'Could not prepare the receiver queue: $error';
+          }
+        }));
+      }
+    });
+  }
+
+  Future<void> _refreshDlnaQueue() {
+    if (_dlnaQueuePreparation case final pending?) return pending;
+    if (_dlnaQueueUncertain) return Future.value();
+    final revision = _dlnaRevision;
+    final preparation = _syncDlnaQueue(revision);
+    _dlnaQueuePreparation = preparation;
+    return preparation.whenComplete(() {
+      if (identical(_dlnaQueuePreparation, preparation)) {
+        _dlnaQueuePreparation = null;
+      }
+    });
+  }
+
+  Future<void> _syncDlnaQueue(int revision) async {
+    final device = _activeDevice;
+    final ps = PlayerService();
+    bool current() =>
+        device?.backend == CastBackend.dlna &&
+        identical(device, _activeDevice) &&
+        revision == _dlnaRevision;
+    if (!current() || _currentSong == null) return;
+    final playlist = ps.playlist;
+    final currentIndex = ps.currentIndex;
+    final currentOccurrence = ps.castPlaylistOccurrence(currentIndex);
+    final initialUri = _dlnaReceiverUri;
+    final mode = ps.loopModeNotifier.value.name;
+    final shuffle = ps.shuffleModeNotifier.value;
+    final playbackRevision = ps.playbackRequestRevision;
+    final repeatOne = mode == 'one';
+    final indices = <int>[];
+    if (playlist.isNotEmpty &&
+        !repeatOne &&
+        mode != 'stopAfterCurrent' &&
+        shuffle.name != 'random') {
+      for (var n = 1; n <= (device!.isSonos ? 4 : 1); n++) {
+        var index = ps.currentIndex + n;
+        if (index >= playlist.length) {
+          if (mode != 'all') break;
+          index %= playlist.length;
+        }
+        if (index == ps.currentIndex || indices.contains(index)) break;
+        if (playlist[index].isPending) break;
+        indices.add(index);
+      }
+    }
+    final upcoming = [
+      for (final index in indices)
+        (index: index, occurrence: ps.castPlaylistOccurrence(index), song: playlist[index]),
+    ];
+    final key = '$currentIndex|$mode|${shuffle.name}|${upcoming.map((entry) {
+      final song = entry.song;
+      return '${identityHashCode(entry.occurrence)}:${song.id}:${song.filePath}:${song.fileType}:${song.atmosEncoded}';
+    }).join('|')}';
+    if (key == _dlnaQueueKey) return;
+
+    bool stillWanted() =>
+        current() &&
+        !_dlnaQueueUncertain &&
+        initialUri == _dlnaReceiverUri &&
+        playbackRevision == ps.playbackRequestRevision &&
+        ps.currentIndex == currentIndex &&
+        identical(ps.castPlaylistOccurrence(currentIndex), currentOccurrence) &&
+        ps.loopModeNotifier.value.name == mode &&
+        ps.shuffleModeNotifier.value == shuffle &&
+        upcoming.every((entry) {
+          final song = ps.castPlaylistSongAt(entry.index);
+          return song != null &&
+              identical(ps.castPlaylistOccurrence(entry.index), entry.occurrence) &&
+              song.id == entry.song.id &&
+              !shouldReplaceQueuedAudioSource(song, entry.song);
+        });
+
+    final ready = <_DlnaQueueItem>[];
+    try {
+      for (final entry in upcoming) {
+        final held = _dlnaItems.where((item) =>
+            identical(item.occurrence, entry.occurrence) &&
+            item.song.id == entry.song.id &&
+            !shouldReplaceQueuedAudioSource(item.song, entry.song)).firstOrNull;
+        final item = held ??
+            await _prepareDlna(device!, entry.song, entry.occurrence, stillWanted);
+        if (!stillWanted()) return;
+        ready.add(item);
+      }
+    } on CastHandoffCancelled {
+      return;
+    }
+
+    await _serializeDlna(() async {
+      if (!stillWanted()) return;
+      _dlnaPollRevision++;
+      _dlnaBusy = true;
+      try {
+        final control = device!.controlUrl!;
+        if (device.isSonos) {
+          final position = await _dlna.getPosition(control);
+          if (position == null || !stillWanted()) return;
+          var here = position.track - 1;
+          final sameSource = CastContentServer.instance.sameSource;
+          if (here < 0 ||
+              here >= _dlnaItems.length ||
+              (!sameSource(_dlnaItems[here].url, position.uri) &&
+                  (position.resourceUri == null ||
+                      !sameSource(_dlnaItems[here].url, position.resourceUri!))) ||
+              !identical(_dlnaItems[here].occurrence, currentOccurrence)) {
+            return;
+          }
+          await _dlna.playMode(control, repeatOne: repeatOne);
+          if (!stillWanted()) return;
+          _dlnaQueueUncertain = true;
+          if (here > 0) {
+            await _dlna.removeQueueTail(control, 1, here);
+            _dlnaItems.removeRange(0, here);
+            here = 0;
+          }
+          var kept = 0;
+          final ahead = _dlnaItems.sublist(here + 1);
+          while (kept < ahead.length &&
+              kept < ready.length &&
+              ahead[kept].url == ready[kept].url &&
+              identical(ahead[kept].occurrence, ready[kept].occurrence)) {
+            kept++;
+          }
+          if (ahead.length > kept) {
+            await _dlna.removeQueueTail(
+              control,
+              here + kept + 2,
+              ahead.length - kept,
+            );
+            _dlnaItems.removeRange(here + kept + 1, _dlnaItems.length);
+          }
+          for (final item in ready.skip(kept)) {
+            if (!current()) break;
+            await _enqueueSonos(control, item);
+            _dlnaItems.add(item);
+          }
+          _dlnaQueueUncertain = false;
+        } else {
+          var next = repeatOne ? _dlnaItems.firstOrNull : ready.firstOrNull;
+          // Generic SetNext has no occurrence id. Identical adjacent URLs
+          // advance through confirmed completion instead of becoming a loop.
+          if (!repeatOne && next?.url == _dlnaReceiverUri) next = null;
+          try {
+            await _dlna.nextUri(
+              control,
+              next?.url ?? '',
+              next == null ? '' : _dlnaMetadata(next),
+            );
+            final playing = _dlnaItems
+                .where((e) => e.url == _dlnaReceiverUri)
+                .firstOrNull;
+            _dlnaItems
+              ..clear()
+              ..addAll([if (playing != null) playing, if (next != null) next]);
+          } catch (_) {
+            // SetNext is optional. Completion polling advances Lokal's queue.
+          }
+        }
+        if (stillWanted()) {
+          _dlnaQueueKey = key;
+          CastContentServer.instance.retainUrls([
+            for (final item in _dlnaItems) ...[
+              item.url,
+              if (item.artworkUrl != null) item.artworkUrl!,
+            ],
+          ]);
+        }
+      } catch (_) {
+        if (_dlnaQueueUncertain && current()) {
+          errorNotifier.value =
+              'The receiver queue could not be confirmed. Select a track to rebuild it.';
+          return;
+        }
+        rethrow;
+      } finally {
+        _dlnaBusy = false;
       }
     });
   }

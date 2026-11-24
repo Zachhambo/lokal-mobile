@@ -19,6 +19,7 @@ import tempfile
 import zipfile
 
 from ios_native_symbols import inspect_soulseek_images
+from ios_widget_package import zip_widgets
 
 
 class ReleaseAuditError(ValueError):
@@ -202,8 +203,10 @@ def verify(artifact: Path, repo: Path, *, min_sources: int = 500) -> dict:
             _require(package_path in names or
                      any(name.startswith(package_path + "/") for name in names),
                      f"Missing Cast resource: {relative}")
-        _require(not any(".appex/" in name for name in names),
-                 "Unqualified iOS app extension is embedded")
+        widgets = zip_widgets(archive, "Payload/Runner.app/Info.plist", info)
+        _require(metadata.get("widgets", []) == widgets, "Widget inventory differs from IPA")
+        for widget in widgets:
+            _require(widget['executable'] in binaries, "Widget binary missing from native inventory")
         _require(any(name.startswith("Payload/Runner.app/Frameworks/")
                      for name in names), "Missing device frameworks")
 

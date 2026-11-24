@@ -9,3 +9,12 @@
 "Start Flow or radio in Lokal" = "Lokal’de Flow veya radyo başlat";
 "Playback progress" = "Çalma ilerlemesi";
 "Unknown track" = "Bilinmeyen parça";
+
+"Play" = "Oynat";
+"Pause" = "Duraklat";
+"Next" = "Sonraki";
+"Previous" = "Önceki";
+"Queue" = "Sıra";
+"Flow" = "Flow";
+"Song Radio" = "Şarkı radyosu";
+"Your Flow" = "Flow’un";

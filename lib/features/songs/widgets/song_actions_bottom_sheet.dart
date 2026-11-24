@@ -1,3 +1,4 @@
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flick/services/motion_art/moving_cover_settings.dart';
 import 'package:flick/services/link/lokal_desktop_source.dart';
 import 'package:flick/l10n/l10n.dart';
@@ -66,6 +67,12 @@ bool showWatchVideoMenuAction({
   required bool videosEnabled,
   bool hideMediaActions = false,
 }) => !nowPlaying && !hideMediaActions && videosEnabled;
+
+@visibleForTesting
+bool showSendToDesktopMenuAction({
+  required bool localFile,
+  required bool connected,
+}) => localFile && connected;
 
 @visibleForTesting
 Song? songForOpenMenu({
@@ -176,9 +183,7 @@ class SongActionsBottomSheet extends ConsumerWidget {
 
   void _say(String message) {
     if (!rootContext.mounted) return;
-    ScaffoldMessenger.maybeOf(rootContext)?.showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
-    );
+    LokalToast.show(rootContext, message, duration: const Duration(seconds: 2));
   }
 
   @override
@@ -186,6 +191,7 @@ class SongActionsBottomSheet extends ConsumerWidget {
     final t = context.lokal;
     final liked = ref.watch(isSongFavoriteProvider(song.id));
     final videos = ref.watch(musicVideosEnabledProvider);
+    final desktopLink = ref.watch(lokalRemoteControllerProvider);
     final hasAlbum = song.album?.trim().isNotEmpty == true;
     // Actions run after the menu closes, so they read through the container,
     // not this widget's ref.
@@ -276,6 +282,42 @@ class SongActionsBottomSheet extends ConsumerWidget {
           onTap: close(() async {
             await LokalDesktopSource.instance.downloadToPhone(song);
             _say(l10n.linkDownloaded);
+          }),
+        ),
+      if (showSendToDesktopMenuAction(
+        localFile: _isLocalFile,
+        connected: desktopLink.socketConnected,
+      ))
+        _MenuRow(
+          icon: Icons.send_rounded,
+          label: lokalText('Send to desktop'),
+          onTap: close(() async {
+            try {
+              await container
+                  .read(lokalRemoteControllerProvider.notifier)
+                  .sendSongToDesktop(song);
+              _say(
+                lokalText(
+                  'Sent “{arg0}” to desktop',
+                  args: {'arg0': song.title},
+                ),
+              );
+            } catch (error) {
+              final reason = error is StateError
+                  ? error.message
+                  : 'Could not read or send the audio file. Reconnect and retry.';
+              _say(
+                lokalText(
+                  'Could not send “{arg0}” to desktop: {arg1}',
+                  args: {
+                    'arg0': song.title,
+                    'arg1': reason.length > 140
+                        ? reason.substring(0, 140)
+                        : reason,
+                  },
+                ),
+              );
+            }
           }),
         ),
       _MenuRow(

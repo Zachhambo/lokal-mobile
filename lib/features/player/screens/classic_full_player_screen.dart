@@ -1,6 +1,7 @@
 import 'package:flick/features/player/widgets/lokal_player_columns.dart';
 
-import '../widgets/android_output_chooser.dart';
+import '../widgets/playback_output_picker.dart';
+import '../widgets/full_player_library_action.dart';
 
 import 'package:flutter/services.dart';
 import 'package:flick/services/android_audio_device_service.dart';
@@ -49,7 +50,6 @@ import 'package:flick/widgets/common/display_mode_wrapper.dart';
 import 'package:flick/widgets/common/flick_artwork_placeholder.dart';
 import 'package:flick/widgets/uac2/iso_volume_popup.dart';
 import 'package:flick/widgets/uac2/uac2_error_notification.dart';
-import 'package:flick/features/settings/screens/casting_settings_screen.dart';
 import 'package:flick/features/settings/screens/equalizer_screen.dart';
 import 'package:flick/providers/providers.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -539,7 +539,6 @@ class _ClassicFullPlayerScreenState
     AlbumColorMode albumColorMode,
     dynamic appPrefs,
   ) {
-    final isCasting = ref.watch(isCastingProvider);
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: context.responsive(8.0, 12.0, 16.0),
@@ -563,14 +562,14 @@ class _ClassicFullPlayerScreenState
               if (song.isFromLocker) _buildReturnToLockerButton(context),
               if (song.isFromLocker)
                 SizedBox(width: context.responsive(6.0, 8.0, 10.0)),
-              _buildChromeButton(
-                context,
-                icon: LucideIcons.cast,
-                albumColor: isCasting ? albumColor : null,
-                albumColorMode: isCasting ? albumColorMode : null,
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => const CastingSettingsScreen(),
+              FullPlayerLibraryAction(
+                song: song,
+                builder: (icon, label, onTap) => Tooltip(
+                  message: label,
+                  child: _buildChromeButton(
+                    context,
+                    icon: icon,
+                    onTap: onTap,
                   ),
                 ),
               ),
@@ -628,7 +627,10 @@ class _ClassicFullPlayerScreenState
 
   Widget _buildOutputDeviceChip(BuildContext context, Song song) {
     final diagnostics = ref.watch(audioOutputDiagnosticsProvider);
-    final label = diagnostics?.outputDeviceLabel.trim().isNotEmpty == true
+    final cast = ref.watch(castProvider);
+    final label = cast.isActive && cast.activeDevice != null
+        ? cast.activeDevice!.name
+        : diagnostics?.outputDeviceLabel.trim().isNotEmpty == true
         ? diagnostics!.outputDeviceLabel.trim()
         : diagnostics?.routeLabel.trim().isNotEmpty == true
         ? diagnostics!.routeLabel.trim()
@@ -655,7 +657,7 @@ class _ClassicFullPlayerScreenState
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                LucideIcons.headphones,
+                cast.isActive ? LucideIcons.cast : LucideIcons.headphones,
                 size: context.responsive(17, 19, 21),
                 color: Colors.white.withValues(alpha: 0.9),
               ),
@@ -680,7 +682,7 @@ class _ClassicFullPlayerScreenState
   }
 
   Future<void> _showOutputDevicePopup(BuildContext context, Song song) =>
-      openAndroidOutputChooser(context);
+      PlaybackOutputPicker.show(context);
 
   Widget _buildReturnToLockerButton(BuildContext context) {
     return GestureDetector(
@@ -728,7 +730,7 @@ class _ClassicFullPlayerScreenState
   Widget _buildChromeButton(
     BuildContext context, {
     required IconData icon,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
     Color? albumColor,
     AlbumColorMode? albumColorMode,
   }) {
@@ -738,7 +740,7 @@ class _ClassicFullPlayerScreenState
         shape: BoxShape.circle,
       ),
       child: IconButton(
-        onPressed: AppHaptics.wrap(onTap),
+        onPressed: onTap == null ? null : AppHaptics.wrap(onTap),
         padding: EdgeInsets.all(context.responsive(8.0, 10.0, 12.0)),
         constraints: const BoxConstraints(),
         icon: Icon(

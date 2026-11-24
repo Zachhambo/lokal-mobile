@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 
 from ios_native_symbols import inspect_soulseek_images
+from ios_widget_package import directory_widgets
 
 
 def command(*args: str) -> str:
@@ -83,6 +84,8 @@ def inspect_bundle(app: Path) -> dict:
         metadata = plistlib.loads((framework / "Info.plist").read_bytes())
         binaries.append(framework / metadata["CFBundleExecutable"])
     binaries.extend(app.glob("Frameworks/*.dylib"))
+    widgets = directory_widgets(app, info)
+    binaries.extend(app / widget['executable'] for widget in widgets)
     smb = inspect_smb(app, executable, binaries)
     soulseek = inspect_soulseek_images(executable.relative_to(app).as_posix(),
         [binary.relative_to(app).as_posix() for binary in binaries],
@@ -113,6 +116,7 @@ def inspect_bundle(app: Path) -> dict:
         "build": info["CFBundleVersion"],
         "minimum_ios": info["MinimumOSVersion"],
         "binaries_inspected": len(binaries),
+        "widgets": widgets,
         "cast_resources_verified": list(cast_resources),
         "binary_uuids": uuids,
         "native_smb": smb,

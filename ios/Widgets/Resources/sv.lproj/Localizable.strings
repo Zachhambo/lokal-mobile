@@ -9,3 +9,12 @@
 "Start Flow or radio in Lokal" = "Starta Flow eller radio i Lokal";
 "Playback progress" = "Uppspelningsförlopp";
 "Unknown track" = "Okänd låt";
+
+"Play" = "Spela";
+"Pause" = "Paus";
+"Next" = "Nästa";
+"Previous" = "Föregående";
+"Queue" = "Kö";
+"Flow" = "Flow";
+"Song Radio" = "Låtradio";
+"Your Flow" = "Din Flow";

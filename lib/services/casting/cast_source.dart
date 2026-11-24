@@ -33,6 +33,7 @@ String castAudioContentType(String url, String fileType) {
     'opus': 'audio/ogg',
     'm4a': 'audio/mp4',
     'mp4': 'audio/mp4',
+    'webm': 'audio/webm',
     'alac': 'audio/mp4',
     'aac': 'audio/aac',
     'aiff': 'audio/aiff',
@@ -47,3 +48,15 @@ String castAudioContentType(String url, String fileType) {
       : '';
   return types[extension] ?? types[fileType.toLowerCase()] ?? 'audio/*';
 }
+
+String castProgressiveFilename(Uri upstream, String fileType) =>
+    switch (castAudioContentType(upstream.toString(), fileType)) {
+      'audio/mpeg' => 'track.mp3',
+      'audio/flac' => 'track.flac',
+      'audio/wav' => 'track.wav',
+      'audio/ogg' => 'track.ogg',
+      'audio/mp4' => 'track.m4a',
+      'audio/webm' => 'track.webm',
+      'audio/aac' => 'track.aac',
+      _ => 'track',
+    };

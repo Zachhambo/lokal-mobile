@@ -38,7 +38,7 @@ class _CastingSettingsScreenState extends ConsumerState<CastingSettingsScreen> {
   };
 
   String _subtitleFor(CastDevice d) => switch (d.backend) {
-    CastBackend.dlna => l10n.dlnaUpnp,
+    CastBackend.dlna => d.isSonos ? 'Sonos · UPnP' : l10n.dlnaUpnp,
     CastBackend.chromecast => l10n.chromecast,
   };
 
@@ -62,6 +62,8 @@ class _CastingSettingsScreenState extends ConsumerState<CastingSettingsScreen> {
       final message =
           error is PlatformException && error.code.startsWith('CAST_')
           ? error.message ?? l10n.error3
+          : error is StateError
+          ? error.message.toString()
           : l10n.error3;
       LokalToast.fromSnackBar(
         context,
@@ -135,7 +137,8 @@ class _CastingSettingsScreenState extends ConsumerState<CastingSettingsScreen> {
                   () => ref.read(castProvider.notifier).disconnect(),
                 ),
               ),
-              if (active.backend == CastBackend.chromecast)
+              if (active.backend == CastBackend.chromecast ||
+                  active.backend == CastBackend.dlna)
                 LokalSettingRow(
                   label: lokalText('Return to this device'),
                   description: lokalText(
@@ -148,17 +151,21 @@ class _CastingSettingsScreenState extends ConsumerState<CastingSettingsScreen> {
                       context: context,
                       builder: (dialogContext) => AlertDialog(
                         title: Text(lokalText('Leave Cast session?')),
-                        content: Text(lokalText(
-                          'Lokal will return to this phone without starting audio automatically. '
-                          'The receiver may still be playing; stop it separately if needed.',
-                        )),
+                        content: Text(
+                          lokalText(
+                            'Lokal will return to this phone without starting audio automatically. '
+                            'The receiver may still be playing; stop it separately if needed.',
+                          ),
+                        ),
                         actions: [
                           TextButton(
-                            onPressed: () => Navigator.of(dialogContext).pop(false),
+                            onPressed: () =>
+                                Navigator.of(dialogContext).pop(false),
                             child: Text(l10n.cancel),
                           ),
                           FilledButton(
-                            onPressed: () => Navigator.of(dialogContext).pop(true),
+                            onPressed: () =>
+                                Navigator.of(dialogContext).pop(true),
                             child: Text(lokalText('Return to phone')),
                           ),
                         ],
@@ -166,10 +173,9 @@ class _CastingSettingsScreenState extends ConsumerState<CastingSettingsScreen> {
                     );
                     if (!mounted || leave != true) return;
                     await _runCastAction(
-                      () => ref.read(castProvider.notifier).disconnect(
-                        resumeLocal: false,
-                        leaveReceiver: true,
-                      ),
+                      () => ref
+                          .read(castProvider.notifier)
+                          .disconnect(resumeLocal: false, leaveReceiver: true),
                     );
                   },
                 ),
@@ -233,7 +239,7 @@ class _CastingSettingsScreenState extends ConsumerState<CastingSettingsScreen> {
             children: [
               LokalSettingRow(
                 label: 'Casting files from iPhone',
-                description: 'Keep Lokal open when casting files stored on this iPhone. Network-hosted tracks play directly on the receiver.',
+                description: 'Use AirPlay for files stored on this iPhone or iPad. Keep Lokal open when casting online songs that stream through this device or while Lokal updates the receiver queue.',
                 icon: LucideIcons.info,
                 enabled: false,
               ),
@@ -395,23 +401,23 @@ class _OutputSectionState extends State<_OutputSection> {
           ? null
           : () async {
               try {
-                final changed =
-                    await CastingService.instance.selectLocalOutputRoute(
-                  r['id'] as String,
-                );
+                final changed = await CastingService.instance
+                    .selectLocalOutputRoute(r['id'] as String);
                 if (!changed && mounted) {
                   LokalToast.fromSnackBar(
                     context,
                     SnackBar(
-                      content: Text(lokalText('This audio output is no longer available.')),
+                      content: Text(
+                        lokalText('This audio output is no longer available.'),
+                      ),
                     ),
                   );
                 }
                 if (mounted) _refresh();
               } catch (error) {
                 if (!mounted) return;
-                final message = error is PlatformException &&
-                        error.code.startsWith('CAST_')
+                final message =
+                    error is PlatformException && error.code.startsWith('CAST_')
                     ? error.message ?? l10n.error3
                     : l10n.error3;
                 LokalToast.fromSnackBar(

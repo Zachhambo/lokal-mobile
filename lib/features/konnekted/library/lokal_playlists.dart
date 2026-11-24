@@ -4,7 +4,10 @@ import 'package:flick/l10n/l10n.dart';
 import 'package:flick/widgets/lokal/lokal_toast.dart';
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
+
+import 'package:image_picker/image_picker.dart';
 
 import 'package:flick/services/sources/subsonic_service.dart';
 
@@ -72,8 +75,14 @@ class LokalPlaylistArtwork extends ConsumerWidget {
     final coverId = playlist.coverArt?.trim();
     final serverId = playlist.networkServerId;
     final fallback = LokalCollage(songs: songs);
-    if (serverId == null || coverId == null || coverId.isEmpty) {
-      return fallback;
+    if (coverId == null || coverId.isEmpty) return fallback;
+    if (serverId == null) {
+      return Image.file(
+        File(coverId),
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (context, error, stackTrace) => fallback,
+      );
     }
     final cover = ref
         .watch(
@@ -572,6 +581,47 @@ class LokalPlaylistPage extends ConsumerWidget {
     }
   }
 
+  Future<void> _editCover(
+    BuildContext context,
+    WidgetRef ref,
+    Playlist playlist,
+  ) async {
+    if (playlist.isNetworkSource) return;
+    try {
+      final image = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 85,
+      );
+      if (image == null) return;
+      final bytes = await image.readAsBytes();
+      final changed = await ref.read(playlistsProvider.notifier)
+          .setPlaylistCover(playlist.id, bytes);
+      if (!changed && context.mounted) {
+        _say(context, 'Could not update the playlist cover.');
+      }
+    } catch (error) {
+      if (context.mounted) _say(context, 'Could not use that image: $error');
+    }
+  }
+
+  Future<void> _resetCover(
+    BuildContext context,
+    WidgetRef ref,
+    Playlist playlist,
+  ) async {
+    try {
+      final changed = await ref.read(playlistsProvider.notifier)
+          .setPlaylistCover(playlist.id, null);
+      if (!changed && context.mounted) {
+        _say(context, 'Could not reset the playlist cover.');
+      }
+    } catch (_) {
+      if (context.mounted) _say(context, 'Could not reset the playlist cover.');
+    }
+  }
+
   Future<void> _showActions(
     BuildContext context,
     WidgetRef ref,
@@ -597,6 +647,18 @@ class LokalPlaylistPage extends ConsumerWidget {
             value: 'reorder',
             label: lokalText('Reorder songs'),
             icon: Icons.sort_rounded,
+          ),
+        if (!playlist.isNetworkSource)
+          LokalChoice(
+            value: 'cover',
+            label: lokalText('Edit playlist cover'),
+            icon: Icons.image_outlined,
+          ),
+        if (!playlist.isNetworkSource && playlist.coverArt?.isNotEmpty == true)
+          LokalChoice(
+            value: 'reset_cover',
+            label: lokalText('Reset to automatic cover'),
+            icon: Icons.restore_rounded,
           ),
         if (!playlist.isNetworkSource)
           LokalChoice(
@@ -627,6 +689,10 @@ class LokalPlaylistPage extends ConsumerWidget {
         await pushLokal(context, _ReorderPage(playlistId: playlistId));
       case 'rename':
         await _rename(context, ref, playlist);
+      case 'cover':
+        await _editCover(context, ref, playlist);
+      case 'reset_cover':
+        await _resetCover(context, ref, playlist);
       case 'export':
         await _export(context, ref, playlist);
       case 'delete':

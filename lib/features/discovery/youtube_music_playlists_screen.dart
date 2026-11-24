@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flick/features/discovery/lastfm_discovery.dart';
 import 'package:flick/features/discovery/youtube_music_playlist_cache.dart';
 import 'package:flick/features/konnekted/konnekted_data.dart';
@@ -86,8 +87,9 @@ class _YoutubeMusicPlaylistsScreenState
         _error = _items.isEmpty ? error.toString() : null;
       });
       if (mounted && _items.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('YouTube Music update failed. Saved playlists are still available.')),
+        LokalToast.show(
+          context,
+          'YouTube Music update failed. Saved playlists are still available.',
         );
       }
     } finally {
@@ -262,8 +264,9 @@ class _YoutubePlaylistDetailState
     } catch (error) {
       if (mounted && _tracks.isEmpty) setState(() => _error = error.toString());
       if (mounted && _tracks.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not update playlist; saved songs remain available.')),
+        LokalToast.show(
+          context,
+          'Could not update playlist; saved songs remain available.',
         );
       }
     } finally {

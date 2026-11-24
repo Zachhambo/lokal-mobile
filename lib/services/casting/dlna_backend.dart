@@ -1,12 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+
 import 'package:http/http.dart' as http;
 import 'package:xml/xml.dart' as xml;
+
 import 'cast_device.dart';
 
 // ponytail: pure-Dart DLNA/UPnP via RawDatagramSocket (SSDP) + AVTransport SOAP.
 // No new dep; reuses http + xml like UpnpService. Covers DLNA + UPnP renderers
-// (same AVTransport:1 protocol). Local files need an embedded HTTP server — deferred.
+// (same AVTransport:1 protocol). Local media uses CastContentServer.
 
 class DlnaBackend {
   static const _ssdpAddress = '239.255.255.250';
@@ -16,14 +19,18 @@ class DlnaBackend {
   static const _renderingControlType =
       'urn:schemas-upnp-org:service:RenderingControl:1';
 
-  DlnaBackend();
+  DlnaBackend({http.Client? client}) : _client = client;
+  final http.Client? _client;
+  Future<http.Response> _get(Uri uri) => _client?.get(uri) ?? http.get(uri);
+
+  Future<CastDevice?> resolve(String location) => _resolve(location);
 
   Future<List<CastDevice>> discover({
     Duration timeout = const Duration(seconds: 4),
   }) async {
     final socket = await RawDatagramSocket.bind(
       InternetAddress.anyIPv4,
-      _ssdpPort,
+      0,
       reuseAddress: true,
     );
     final locations = <String>{};
@@ -32,13 +39,15 @@ class DlnaBackend {
       try {
         socket.joinMulticast(InternetAddress(_ssdpAddress));
       } catch (_) {}
-      final req =
-          'M-SEARCH * HTTP/1.1\r\n'
-          'HOST: $_ssdpAddress:$_ssdpPort\r\n'
-          'MAN: "ssdp:discover"\r\n'
-          'MX: 2\r\n'
-          'ST: $_st\r\n\r\n';
-      socket.send(req.codeUnits, InternetAddress(_ssdpAddress), _ssdpPort);
+      for (final target in [_st, 'urn:schemas-upnp-org:device:ZonePlayer:1']) {
+        final req =
+            'M-SEARCH * HTTP/1.1\r\n'
+            'HOST: $_ssdpAddress:$_ssdpPort\r\n'
+            'MAN: "ssdp:discover"\r\n'
+            'MX: 2\r\n'
+            'ST: $target\r\n\r\n';
+        socket.send(req.codeUnits, InternetAddress(_ssdpAddress), _ssdpPort);
+      }
       final done = Completer<void>();
       Timer(timeout, () {
         if (!done.isCompleted) done.complete();
@@ -49,8 +58,9 @@ class DlnaBackend {
           if (datagram == null) return;
           final msg = String.fromCharCodes(datagram.data);
           final m = RegExp(
-            r'LOCATION: (.+)',
+            r'^LOCATION\s*:\s*(.+)$',
             caseSensitive: false,
+            multiLine: true,
           ).firstMatch(msg);
           if (m != null) locations.add(m.group(1)!.trim());
         }
@@ -70,30 +80,60 @@ class DlnaBackend {
         if (dev != null) devices.add(dev);
       }),
     );
-    return devices;
+    return {for (final device in devices) device.id: device}.values.toList();
   }
 
   Future<CastDevice?> _resolve(String locationUrl) async {
     try {
-      final res = await http
-          .get(Uri.parse(locationUrl))
+      final res = await _get(Uri.parse(locationUrl))
           .timeout(const Duration(seconds: 3));
       if (res.statusCode != 200) return null;
-      final doc = xml.XmlDocument.parse(res.body);
+      final doc = xml.XmlDocument.parse(
+        utf8.decode(res.bodyBytes, allowMalformed: true),
+      );
       final friendlyName =
           doc
-              .findAllElements('friendlyName', namespace: '*')
+              .findAllElements('friendlyName', namespaceUri: '*')
               .firstOrNull
               ?.innerText ??
           'Unknown';
       final udn =
-          doc.findAllElements('UDN', namespace: '*').firstOrNull?.innerText ??
+          doc
+              .findAllElements('UDN', namespaceUri: '*')
+              .firstOrNull
+              ?.innerText ??
           locationUrl;
-      String? controlUrl = _findServiceControlUrl(doc, locationUrl, 'AVTransport');
+      final manufacturer =
+          doc
+              .findAllElements('manufacturer', namespaceUri: '*')
+              .firstOrNull
+              ?.innerText ??
+          '';
+      final topology = _findServiceControlUrl(
+        doc,
+        locationUrl,
+        'ZoneGroupTopology',
+      );
+      final isSonos =
+          manufacturer.toLowerCase().contains('sonos') || topology != null;
+      final roomName = isSonos
+          ? doc.rootElement
+                .findElements('device', namespaceUri: '*')
+                .firstOrNull
+                ?.findElements('roomName', namespaceUri: '*')
+                .firstOrNull
+                ?.innerText
+                .trim()
+          : null;
+      String? controlUrl = _findServiceControlUrl(
+        doc,
+        locationUrl,
+        'AVTransport',
+      );
       if (controlUrl == null) return null;
       return CastDevice(
         id: udn,
-        name: friendlyName,
+        name: roomName != null && roomName.isNotEmpty ? roomName : friendlyName,
         backend: CastBackend.dlna,
         locationUrl: locationUrl,
         controlUrl: controlUrl,
@@ -101,6 +141,13 @@ class DlnaBackend {
           doc,
           locationUrl,
           'RenderingControl',
+        ),
+        isSonos: isSonos,
+        topologyControlUrl: topology,
+        groupRenderingControlUrl: _findServiceControlUrl(
+          doc,
+          locationUrl,
+          'GroupRenderingControl',
         ),
       );
     } catch (_) {
@@ -113,20 +160,26 @@ class DlnaBackend {
     String locationUrl,
     String serviceName,
   ) {
-    for (final svc in doc.findAllElements('service', namespace: '*')) {
+    for (final svc in doc.findAllElements('service', namespaceUri: '*')) {
       final st =
           svc
-              .findElements('serviceType', namespace: '*')
+              .findElements('serviceType', namespaceUri: '*')
               .firstOrNull
               ?.innerText ??
           '';
-      if (!st.contains(serviceName)) continue;
+      if (st.split(':').elementAtOrNull(3) != serviceName) continue;
       final cu = svc
-          .findElements('controlURL', namespace: '*')
+          .findElements('controlURL', namespaceUri: '*')
           .firstOrNull
           ?.innerText;
       if (cu == null) continue;
-      return Uri.parse(locationUrl).resolve(cu).toString();
+      final base = doc
+          .findAllElements('URLBase', namespaceUri: '*')
+          .firstOrNull
+          ?.innerText;
+      return Uri.parse(base == null || base.isEmpty ? locationUrl : base)
+          .resolve(cu)
+          .toString();
     }
     return null;
   }
@@ -135,28 +188,262 @@ class DlnaBackend {
     String controlUrl,
     String mediaUrl, {
     String? title,
+    String? artist,
+    String? album,
+    String? artworkUrl,
+    String contentType = 'audio/mpeg',
   }) async {
-    final current = title != null
-        ? '<dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">${_esc(title)}</dc:title>'
-        : '';
-    final meta =
-        '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" '
-        'xmlns:dc="http://purl.org/dc/elements/1.1/">'
-        '<item id="1" parentID="0" restricted="1">'
-        '<res protocolInfo="http-get:*:audio/*:*">${_esc(mediaUrl)}</res>'
-        '$current</item></DIDL-Lite>';
+    final meta = metadata(
+      mediaUrl,
+      title: title,
+      artist: artist,
+      album: album,
+      artworkUrl: artworkUrl,
+      contentType: contentType,
+    );
     await _soap(
       controlUrl,
       _avTransportType,
       'SetAVTransportURI',
-      '<InstanceID>0</InstanceID><CurrentURI>${_esc(mediaUrl)}</CurrentURI><CurrentURIMetaData>$meta</CurrentURIMetaData>',
+      '<InstanceID>0</InstanceID><CurrentURI>${_esc(mediaUrl)}</CurrentURI><CurrentURIMetaData>${_esc(meta)}</CurrentURIMetaData>',
     );
   }
 
-  Future<void> play(String controlUrl) =>
-      _soap(controlUrl, _avTransportType, 'Play', '<InstanceID>0</InstanceID><Speed>1</Speed>');
-  Future<void> pause(String controlUrl) =>
-      _soap(controlUrl, _avTransportType, 'Pause', '<InstanceID>0</InstanceID>');
+  /// DIDL is an XML string inside SOAP, so callers escape the whole result once
+  /// more when placing it in CurrentURIMetaData / EnqueuedURIMetaData.
+  static String metadata(
+    String url, {
+    String? title,
+    String? artist,
+    String? album,
+    String? artworkUrl,
+    String contentType = 'audio/mpeg',
+    int? sonosQueueId,
+    Duration duration = Duration.zero,
+  }) {
+    String e(String? v) => (v ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&apos;');
+    final sonos = sonosQueueId != null;
+    final durationAttribute = sonos && duration.inSeconds > 0
+        ? ' duration="${_fmtTime(duration)}"'
+        : '';
+    return '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">'
+        '<item id="${sonosQueueId ?? 1}" parentID="0" restricted="1"><dc:title>${e(title)}</dc:title>'
+        '${sonos ? '<dc:creator>${e(artist)}</dc:creator>' : ''}'
+        '<upnp:class>object.item.audioItem.musicTrack</upnp:class><upnp:artist>${e(artist)}</upnp:artist><upnp:album>${e(album)}</upnp:album>'
+        '${artworkUrl == null ? '' : '<upnp:albumArtURI>${e(artworkUrl)}</upnp:albumArtURI>'}'
+        '<res protocolInfo="http-get:*:${e(contentType)}:*"$durationAttribute>${e(url)}</res>'
+        '${sonos ? '<desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">RINCON_AssociatedZPUDN</desc>' : ''}'
+        '</item></DIDL-Lite>';
+  }
+
+  Future<CastDevice> coordinator(CastDevice device) async {
+    if (!device.isSonos || device.topologyControlUrl == null) return device;
+    final result = xml.XmlDocument.parse(
+      await _soap(
+        device.topologyControlUrl!,
+        'urn:schemas-upnp-org:service:ZoneGroupTopology:1',
+        'GetZoneGroupState',
+        '',
+      ),
+    );
+    final payload = result
+        .findAllElements('ZoneGroupState', namespaceUri: '*')
+        .firstOrNull
+        ?.innerText;
+    if (payload == null)
+      throw StateError('Sonos did not return room topology.');
+    final topology = xml.XmlDocument.parse(payload);
+    final uuid = device.id.replaceFirst('uuid:', '');
+    final group = topology
+        .findAllElements('ZoneGroup')
+        .where(
+          (g) => g
+              .findAllElements('ZoneGroupMember')
+              .any((m) => m.getAttribute('UUID') == uuid),
+        )
+        .firstOrNull;
+    final masterId = group?.getAttribute('Coordinator');
+    final members = group?.findAllElements('ZoneGroupMember').toList() ?? [];
+    final master = members
+        .where((m) => m.getAttribute('UUID') == masterId)
+        .firstOrNull;
+    final location = master?.getAttribute('Location');
+    if (location == null)
+      throw StateError('Sonos group coordinator is unavailable.');
+    final target = masterId == uuid ? device : await _resolve(location);
+    if (target == null)
+      throw StateError('Sonos group coordinator could not be resolved.');
+    return CastDevice(
+      id: device.id,
+      name: members.length > 1
+          ? '${device.name} (${members.length} rooms)'
+          : device.name,
+      backend: CastBackend.dlna,
+      locationUrl: target.locationUrl,
+      controlUrl: target.controlUrl,
+      renderingControlUrl: target.renderingControlUrl,
+      isSonos: true,
+      topologyControlUrl: target.topologyControlUrl,
+      groupRenderingControlUrl: target.groupRenderingControlUrl,
+    );
+  }
+
+  Future<void> nextUri(String control, String url, String meta) => _soap(
+    control,
+    _avTransportType,
+    'SetNextAVTransportURI',
+    '<InstanceID>0</InstanceID><NextURI>${_esc(url)}</NextURI><NextURIMetaData>${_esc(meta)}</NextURIMetaData>',
+  );
+
+  Future<void> setMetadataUri(String control, String url, String meta) => _soap(
+    control,
+    _avTransportType,
+    'SetAVTransportURI',
+    '<InstanceID>0</InstanceID><CurrentURI>${_esc(url)}</CurrentURI><CurrentURIMetaData>${_esc(meta)}</CurrentURIMetaData>',
+  );
+
+  Future<void> clearQueue(String control) => _soap(
+    control,
+    _avTransportType,
+    'RemoveAllTracksFromQueue',
+    '<InstanceID>0</InstanceID>',
+  );
+  Future<int?> enqueue(
+    String control,
+    String url,
+    String meta, {
+    int position = 0,
+  }) async {
+    final reply = await _soap(
+      control,
+      _avTransportType,
+      'AddURIToQueue',
+      '<InstanceID>0</InstanceID><EnqueuedURI>${_esc(url)}</EnqueuedURI>'
+      '<EnqueuedURIMetaData>${_esc(meta)}</EnqueuedURIMetaData>'
+      '<DesiredFirstTrackNumberEnqueued>$position</DesiredFirstTrackNumberEnqueued>'
+      '<EnqueueAsNext>0</EnqueueAsNext>',
+    );
+    final result = xml.XmlDocument.parse(reply);
+    int? number(String name) => int.tryParse(
+      result.findAllElements(name, namespaceUri: '*').firstOrNull?.innerText ?? '',
+    );
+    final added = number('NumTracksAdded');
+    final index = number('FirstTrackNumberEnqueued');
+    if ((added != null && added != 1) || (index != null && index < 1)) {
+      throw StateError('Sonos did not add the track to its queue.');
+    }
+    return index;
+  }
+
+  Future<String?> speakerArtwork(String control, String mediaUrl) async {
+    final requestUri = Uri.parse(control).resolve('/getaa').replace(
+      queryParameters: {'u': mediaUrl},
+    );
+    final client = _client ?? http.Client();
+    try {
+      final request = http.Request('GET', requestUri)..followRedirects = false;
+      final response = await client.send(request).timeout(
+        const Duration(milliseconds: 800),
+      );
+      unawaited(response.stream.listen((_) {}).cancel());
+      final type = response.headers['content-type']?.split(';').first.trim().toLowerCase();
+      if (response.statusCode == 200 && {'image/jpeg', 'image/png'}.contains(type)) {
+        // The Sonos app resolves this relative URL on its own speaker.
+        return '/getaa?${requestUri.query}';
+      }
+    } catch (_) {
+      // No embedded cover, or this speaker cannot extract it.
+    } finally {
+      if (_client == null) client.close();
+    }
+    return null;
+  }
+  Future<void> removeQueueTail(String control, int start, int count) => _soap(
+    control,
+    _avTransportType,
+    'RemoveTrackRangeFromQueue',
+    '<InstanceID>0</InstanceID><UpdateID>0</UpdateID><StartingIndex>$start</StartingIndex><NumberOfTracks>$count</NumberOfTracks>',
+  );
+  Future<void> seekTrack(String control, int track) => _soap(
+    control,
+    _avTransportType,
+    'Seek',
+    '<InstanceID>0</InstanceID><Unit>TRACK_NR</Unit><Target>$track</Target>',
+  );
+  Future<void> queueSource(CastDevice device) async {
+    final description = await _get(Uri.parse(device.locationUrl!))
+        .timeout(const Duration(seconds: 5));
+    final doc = xml.XmlDocument.parse(description.body);
+    final uuid = doc
+        .findAllElements('UDN', namespaceUri: '*')
+        .first
+        .innerText
+        .replaceFirst('uuid:', '');
+    await _soap(
+      device.controlUrl!,
+      _avTransportType,
+      'SetAVTransportURI',
+      '<InstanceID>0</InstanceID><CurrentURI>x-rincon-queue:${_esc(uuid)}#0</CurrentURI><CurrentURIMetaData></CurrentURIMetaData>',
+    );
+  }
+
+  Future<void> playMode(String control, {required bool repeatOne}) => _soap(
+    control,
+    _avTransportType,
+    'SetPlayMode',
+    '<InstanceID>0</InstanceID><NewPlayMode>${repeatOne ? 'REPEAT_ONE' : 'NORMAL'}</NewPlayMode>',
+  );
+
+  Future<void> setDeviceVolume(CastDevice device, int volume) async {
+    if (device.groupRenderingControlUrl == null)
+      return setVolume(device.renderingControlUrl!, volume);
+    await _soap(
+      device.groupRenderingControlUrl!,
+      'urn:schemas-upnp-org:service:GroupRenderingControl:1',
+      'SetGroupVolume',
+      '<InstanceID>0</InstanceID><DesiredVolume>${volume.clamp(0, 100)}</DesiredVolume>',
+    );
+  }
+
+  Future<int?> deviceVolume(CastDevice device) async {
+    if (device.groupRenderingControlUrl == null)
+      return device.renderingControlUrl == null
+          ? null
+          : getVolume(device.renderingControlUrl!);
+    final result = xml.XmlDocument.parse(
+      await _soap(
+        device.groupRenderingControlUrl!,
+        'urn:schemas-upnp-org:service:GroupRenderingControl:1',
+        'GetGroupVolume',
+        '<InstanceID>0</InstanceID>',
+      ),
+    );
+    return int.tryParse(
+      result
+              .findAllElements('CurrentVolume', namespaceUri: '*')
+              .firstOrNull
+              ?.innerText ??
+          '',
+    );
+  }
+
+  Future<void> play(String controlUrl) => _soap(
+    controlUrl,
+    _avTransportType,
+    'Play',
+    '<InstanceID>0</InstanceID><Speed>1</Speed>',
+  );
+  Future<void> pause(String controlUrl) => _soap(
+    controlUrl,
+    _avTransportType,
+    'Pause',
+    '<InstanceID>0</InstanceID>',
+  );
   Future<void> stop(String controlUrl) =>
       _soap(controlUrl, _avTransportType, 'Stop', '<InstanceID>0</InstanceID>');
 
@@ -188,7 +475,7 @@ class DlnaBackend {
       );
       final doc = xml.XmlDocument.parse(res);
       final v = doc
-          .findAllElements('CurrentVolume', namespace: '*')
+          .findAllElements('CurrentVolume', namespaceUri: '*')
           .firstOrNull
           ?.innerText;
       return v == null ? null : int.tryParse(v.trim())?.clamp(0, 100);
@@ -197,9 +484,18 @@ class DlnaBackend {
     }
   }
 
-  Future<({Duration position, Duration duration, bool playing})?> getPosition(
-    String controlUrl,
-  ) async {
+  Future<
+    ({
+      Duration position,
+      Duration duration,
+      bool playing,
+      String state,
+      String uri,
+      String? resourceUri,
+      int track,
+    })?
+  >
+  getPosition(String controlUrl) async {
     try {
       final res = await _soap(
         controlUrl,
@@ -208,12 +504,23 @@ class DlnaBackend {
         '<InstanceID>0</InstanceID>',
       );
       final doc = xml.XmlDocument.parse(res);
+      String? resourceUri;
+      final metadata = doc.findAllElements('TrackMetaData', namespaceUri: '*')
+          .firstOrNull?.innerText;
+      if (metadata != null && metadata.startsWith('<')) {
+        try {
+          resourceUri = xml.XmlDocument.parse(metadata)
+              .findAllElements('res', namespaceUri: '*').firstOrNull?.innerText;
+        } on xml.XmlException {
+          // Some firmware omits or truncates the optional track metadata.
+        }
+      }
       final posStr = doc
-          .findAllElements('RelTime', namespace: '*')
+          .findAllElements('RelTime', namespaceUri: '*')
           .firstOrNull
           ?.innerText;
       final durStr = doc
-          .findAllElements('TrackDuration', namespace: '*')
+          .findAllElements('TrackDuration', namespaceUri: '*')
           .firstOrNull
           ?.innerText;
       final tiRes = await _soap(
@@ -225,7 +532,7 @@ class DlnaBackend {
       final tiDoc = xml.XmlDocument.parse(tiRes);
       final state =
           tiDoc
-              .findAllElements('CurrentTransportState', namespace: '*')
+              .findAllElements('CurrentTransportState', namespaceUri: '*')
               .firstOrNull
               ?.innerText ??
           '';
@@ -233,6 +540,23 @@ class DlnaBackend {
         position: _parseTime(posStr) ?? Duration.zero,
         duration: _parseTime(durStr) ?? Duration.zero,
         playing: state == 'PLAYING',
+        state: state,
+        resourceUri: resourceUri,
+        uri:
+            doc
+                .findAllElements('TrackURI', namespaceUri: '*')
+                .firstOrNull
+                ?.innerText ??
+            '',
+        track:
+            int.tryParse(
+              doc
+                      .findAllElements('Track', namespaceUri: '*')
+                      .firstOrNull
+                      ?.innerText ??
+                  '',
+            ) ??
+            0,
       );
     } catch (_) {
       return null;
@@ -250,7 +574,8 @@ class DlnaBackend {
         '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
         's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
         '<s:Body><u:$action xmlns:u="$serviceType">$args</u:$action></s:Body></s:Envelope>';
-    final res = await http
+    final client = _client ?? http.Client();
+    final res = await client
         .post(
           Uri.parse(controlUrl),
           headers: {
@@ -259,10 +584,13 @@ class DlnaBackend {
           },
           body: body,
         )
-        .timeout(const Duration(seconds: 5));
-    // ponytail: string sniff instead of full fault parse — enough to tell
-    // "renderer rejected it" from "renderer did it".
-    if (res.statusCode != 200 || res.body.contains('faultcode')) {
+        .timeout(const Duration(seconds: 5))
+        .whenComplete(() {
+          if (_client == null) client.close();
+        });
+    final doc = xml.XmlDocument.parse(res.body);
+    if (res.statusCode != 200 ||
+        doc.findAllElements('Fault', namespaceUri: '*').isNotEmpty) {
       final desc =
           RegExp(r'<errorDescription>([^<]*)').firstMatch(res.body)?.group(1) ??
           res.body;
@@ -278,7 +606,7 @@ class DlnaBackend {
       .replaceAll('&', '&amp;')
       .replaceAll('<', '&lt;')
       .replaceAll('>', '&gt;');
-  String _fmtTime(Duration d) {
+  static String _fmtTime(Duration d) {
     final h = d.inHours.toString().padLeft(2, '0');
     final m = (d.inMinutes % 60).toString().padLeft(2, '0');
     final s = (d.inSeconds % 60).toString().padLeft(2, '0');

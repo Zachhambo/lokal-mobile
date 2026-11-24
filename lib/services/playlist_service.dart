@@ -3,6 +3,9 @@ import 'link/link_protocol.dart';
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:path_provider/path_provider.dart';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
@@ -210,6 +213,65 @@ class PlaylistService {
     await _savePlaylists();
 
     return updated;
+  }
+
+  /// Store a custom local playlist photo in application-owned storage.
+  /// Versioned filenames avoid stale FileImage cache entries after editing.
+  /// Passing null restores the automatically generated song collage.
+  Future<bool> setPlaylistCover(String playlistId, Uint8List? imageBytes) async {
+    await _ensureLoaded();
+    final index = _playlists.indexWhere((p) => p.id == playlistId);
+    if (index < 0 || _playlists[index].isNetworkSource) return false;
+    if (imageBytes != null &&
+        (imageBytes.isEmpty || imageBytes.length > 12 * 1024 * 1024)) {
+      throw const FormatException('Playlist artwork must be smaller than 12 MB.');
+    }
+
+    final directory = Directory(
+      '${(await getApplicationSupportDirectory()).path}'
+      '${Platform.pathSeparator}playlist_covers',
+    );
+    await directory.create(recursive: true);
+    final previous = _playlists[index].coverArt;
+    String? coverPath;
+    if (imageBytes != null) {
+      final hashedId = sha256.convert(utf8.encode(playlistId)).toString();
+      final next = File(
+        '${directory.path}${Platform.pathSeparator}'
+        '${hashedId}_${DateTime.now().microsecondsSinceEpoch}.jpg',
+      );
+      await next.writeAsBytes(imageBytes, flush: true);
+      coverPath = next.path;
+    }
+
+    try {
+      _playlists[index] = _playlists[index].copyWith(
+        coverArt: coverPath,
+        clearCoverArt: coverPath == null,
+        updatedAt: DateTime.now(),
+      );
+      await _savePlaylists();
+    } catch (_) {
+      if (coverPath != null) {
+        try {
+          await File(coverPath).delete();
+        } catch (_) {
+          // Retain the original persistence error.
+        }
+      }
+      rethrow;
+    }
+
+    // Never remove a path outside our private playlist-cover directory.
+    if (previous != null &&
+        previous.startsWith('${directory.path}${Platform.pathSeparator}')) {
+      try {
+        await File(previous).delete();
+      } catch (_) {
+        // The new cover is already persisted; orphan cleanup is best effort.
+      }
+    }
+    return true;
   }
 
   Future<bool> deletePlaylist(String id) async {

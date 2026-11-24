@@ -476,6 +476,10 @@ class MainActivity: FlutterActivity() {
                         result.error("INVALID_ARGUMENT", "URI is required", null)
                     }
                 }
+                "setCastStagingPaths" -> {
+                    CastStagingProtection.update(call.argument<List<String>>("paths") ?: emptyList(), java.io.File(cacheDir, "playback_staging"))
+                    result.success(null)
+                }
                 "cacheUriForPlayback" -> {
                     val uri = call.argument<String>("uri")
                     val extensionHint = call.argument<String>("extensionHint")
@@ -950,6 +954,7 @@ class MainActivity: FlutterActivity() {
                         isFavorite?.let { putExtra("isFavorite", it) }
                         isCasting?.let { putExtra("isCasting", it) }
                         isNativeChromecast?.let { putExtra("isNativeChromecast", it) }
+                        call.argument<Boolean>("castBuffering")?.let { putExtra("castBuffering", it) }
                         call.argument<Boolean>("isRemotePlayback")?.let { putExtra("isRemotePlayback", it) }
                         isLive?.let { putExtra("isLive", it) }
                         castDeviceName?.let { putExtra("castDeviceName", it) }
@@ -1295,7 +1300,7 @@ class MainActivity: FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CAST_CHANNEL).setMethodCallHandler { call, result ->
             val cc = castController
             when (call.method) {
-                "discover" -> result.success(cc?.discover())
+                "discover" -> if (cc == null) result.success(null) else cc.discover { result.success(it) }
                 "connect" -> {
                     if (cc == null) result.error("CAST_UNAVAILABLE", "Google Cast is unavailable.", null)
                     else cc.connect(call.argument<String>("id") ?: "", result)
@@ -3118,6 +3123,7 @@ class MainActivity: FlutterActivity() {
             for (file in byOldest) {
                 if (total <= maxBytes) break
                 if (protect != null && file.absolutePath == protect.absolutePath) continue
+                if (CastStagingProtection.contains(file)) continue
                 val len = file.length()
                 if (file.delete()) {
                     total -= len
@@ -5854,8 +5860,16 @@ class MainActivity: FlutterActivity() {
         }
     }
 
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (castController?.dispatchVolumeKey(event) == true) return true
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onResume() {
         super.onResume()
+        // FlutterActivity can regain focus after external/system UI. Reassert
+        // the media stream here so hardware volume keys keep controlling music.
+        volumeControlStream = AudioManager.STREAM_MUSIC
         LokalAppUpdater.systemUiOpen = false
     }
 
@@ -5874,6 +5888,7 @@ class MainActivity: FlutterActivity() {
         spotifyWebSession.cancelLogin()
         pendingSpotifyAuthResult?.success(null)
         pendingSpotifyAuthResult = null
+        castController?.cancelDiscovery()
         super.onDestroy()
         audioDeviceCallback?.let {
             try {
@@ -5953,3 +5968,4 @@ class MainActivity: FlutterActivity() {
     private external fun nativeMarkRustDirectUsbFallback(reason: String?): Boolean
     private external fun nativeSetRustDeveloperMode(enabled: Boolean)
 }
+

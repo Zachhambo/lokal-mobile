@@ -13,6 +13,7 @@ import 'app_localizations_it.dart';
 import 'app_localizations_nl.dart';
 import 'app_localizations_pl.dart';
 import 'app_localizations_pt.dart';
+import 'app_localizations_ru.dart';
 import 'app_localizations_sv.dart';
 import 'app_localizations_tr.dart';
 import 'app_localizations_zh.dart';
@@ -111,16 +112,11 @@ abstract class AppLocalizations {
     Locale('nl'),
     Locale('pl'),
     Locale('pt'),
+    Locale('ru'),
     Locale('sv'),
     Locale('tr'),
     Locale('zh'),
   ];
-
-  /// lib/features/recap/screens/listening_recap_screen.dart:476
-  ///
-  /// In en, this message translates to:
-  /// **'A little record of what stayed on repeat.'**
-  String get aLittleRecordOfWhatStayed;
 
   /// lib/features/menu/screens/menu_screen.dart:1234
   ///
@@ -4477,12 +4473,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Keep the session moving or head straight back to the player.'**
   String get keepTheSessionMovingOrHead;
-
-  /// lib/features/recap/screens/listening_recap_screen.dart:465
-  ///
-  /// In en, this message translates to:
-  /// **'Keep your Replay.'**
-  String get keepYourReplay;
 
   /// lib/features/settings/screens/duplicate_cleaner_screen.dart:1016
   ///
@@ -11113,6 +11103,7 @@ class _AppLocalizationsDelegate
     'nl',
     'pl',
     'pt',
+    'ru',
     'sv',
     'tr',
     'zh',
@@ -11141,6 +11132,8 @@ AppLocalizations lookupAppLocalizations(Locale locale) {
       return AppLocalizationsPl();
     case 'pt':
       return AppLocalizationsPt();
+    case 'ru':
+      return AppLocalizationsRu();
     case 'sv':
       return AppLocalizationsSv();
     case 'tr':

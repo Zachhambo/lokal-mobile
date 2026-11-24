@@ -8,7 +8,7 @@ import '../../core/utils/app_log.dart';
 import 'morneye_network.dart';
 import 'morneye_storage.dart';
 
-/// A signed gateway session, as desktop's electron/morneye/session.js. Most
+/// A signed gateway session for Morneye add-ons. Most
 /// official add-ons (Deezer, Qobuz, Tidal, Amazon) reach their service through
 /// a gateway that first asks you to pass a verification page once; after that
 /// every request is HMAC-signed with the session it granted.
@@ -54,7 +54,7 @@ Map<String, String> morneyeSignedHeaders(
   );
   final appVersion = config['appVersion'] as String? ?? 'ext-1.0';
   final platform = config['platform'] as String? ?? 'extension';
-  final usedNonce = nonce ?? _randomHex(16);
+  final usedNonce = nonce ?? _randomHex(12);
   final canonical = [
     config['schemeLabel'] as String? ?? 'SPOTIFLAC-HMAC-V1',
     method.toUpperCase(),
@@ -97,7 +97,7 @@ Map<String, Object?> morneyeSignedAddonResponse(
   Map<String, Object?> contract,
 ) {
   final status = (response['status'] as num?)?.toInt();
-  final code = '${contract['code'] ?? ''}'.toUpperCase();
+  final code = '${contract['code'] ?? ''}'.trim().toUpperCase();
   final explicitMode = '${contract['retry_mode'] ?? ''}'.trim();
   // A 4xx response other than throttling/timeouts cannot become playable by
   // retrying the exact same signed ticket. A gateway can explicitly override
@@ -241,6 +241,7 @@ class MorneyeSignedSession {
       config['endpoints'] is Map ? config['endpoints'] as Map : const {};
   String get _callbackUrl =>
       config['callbackUrl'] as String? ?? 'spotiflac://session-grant';
+  static const _jsonHeaders = {'accept': 'application/json'};
 
   MorneyeNetwork get _network {
     final value = network;
@@ -330,7 +331,10 @@ class MorneyeSignedSession {
                 'install_id': '${record['install_id']}',
               },
             );
-    final response = await _network.jsonResponse(url.toString());
+    final response = await _network.jsonResponse(
+      url.toString(),
+      headers: _jsonHeaders,
+    );
     if (response['ok'] != true) {
       throw StateError(
         'Signed-session bootstrap returned HTTP ${response['status']}',
@@ -410,7 +414,7 @@ class MorneyeSignedSession {
     final response = await _network.jsonResponse(
       endpoint(_endpoints['exchange'] as String? ?? '/session/exchange'),
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {..._jsonHeaders, 'content-type': 'application/json'},
       body: jsonEncode({
         'grant': grant,
         'install_id': record['install_id'],
@@ -562,9 +566,18 @@ class MorneyeSignedSession {
       method: method.toUpperCase(),
       body: body,
       headers: {
-        'Content-Type': 'application/json',
-        ...headers,
-        ...morneyeSignedHeaders(config, record, method, url, body),
+        ..._jsonHeaders,
+        if (body.isNotEmpty) 'content-type': 'application/json',
+        for (final entry in headers.entries)
+          entry.key.toLowerCase(): entry.value,
+        for (final entry in morneyeSignedHeaders(
+          config,
+          record,
+          method,
+          url,
+          body,
+        ).entries)
+          entry.key.toLowerCase(): entry.value,
       },
     );
     if (response['status'] == 429) {
@@ -592,6 +605,7 @@ class MorneyeSignedSession {
       }
       await _refresh(record).catchError((_) {});
       record = this.record();
+      var retriedWithNewSession = false;
       for (var attempt = 0; attempt < 3; attempt++) {
         final clock = Stopwatch()..start();
         final response = await _request(record, method, path, body, headers);
@@ -601,8 +615,26 @@ class MorneyeSignedSession {
           final decoded = jsonDecode(response['body'] as String);
           if (decoded is Map<String, Object?>) contract = decoded;
         } catch (_) {}
-        final code = '${contract['code'] ?? ''}'.toUpperCase();
+        final code = '${contract['code'] ?? ''}'.trim().toUpperCase();
         final status = response['status'];
+        if (status == 403 &&
+            contract['origin'] == 'gateway' &&
+            code == 'REQUEST_AUTH_INVALID' &&
+            '${contract['action'] ?? ''}'.trim().isEmpty &&
+            !retriedWithNewSession &&
+            attempt < 2 &&
+            !blocked) {
+          // A concurrent refresh or grant exchange can replace the key while
+          // this request is in flight. Retry only with the replacement key.
+          final latest = this.record();
+          if (usable(latest) &&
+              (latest['session_id'] != record['session_id'] ||
+                  latest['session_secret'] != record['session_secret'])) {
+            record = latest;
+            retriedWithNewSession = true;
+            continue;
+          }
+        }
         if (status == 503 &&
             contract['origin'] == 'provider' &&
             code == 'PROVIDER_UNAVAILABLE' &&
@@ -642,8 +674,18 @@ class MorneyeSignedSession {
           // The gateway ticket decision is the dividing line between
           // "Resolving Tidal stream" and an actual media transfer.
           // Never record a ticket, URL, request body or session credentials.
+          final reason = switch (code) {
+            'REQUEST_AUTH_INVALID' => 'request_auth_invalid',
+            'SESSION_INVALID' => 'session_invalid',
+            'VERIFY_REQUIRED' => 'verification_required',
+            'TICKET_DENIED' => 'ticket_denied',
+            'CAPABILITY_DENIED' => 'capability_denied',
+            _ when contract.isNotEmpty => 'unclassified',
+            _ => 'no_contract',
+          };
           AppLog.instance.add(
             '[Morneye] ticket request status=$status '
+            '${response['ok'] == true ? '' : 'reason=$reason '}'
             'retryable=${addonResponse['retryable'] == true} '
             'verification=${addonResponse['needsVerification'] == true} '
             'elapsedMs=${clock.elapsedMilliseconds}',

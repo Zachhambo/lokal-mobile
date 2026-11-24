@@ -62,6 +62,7 @@ import 'ios_radio_reset_probe.dart';
 import 'ios_webkit_reset_probe.dart';
 import 'ios_session_reset_probe.dart';
 import 'ios_transfer_transport_probe.dart';
+import 'ios_widget_transport_probe.dart';
 import 'ios_queue_reorder_probe.dart';
 import 'package:flick/services/ios_local_audio_requests.dart';
 
@@ -319,7 +320,7 @@ void main() {
       'post172_search_scopes_and_four_exclusive_filters': 'passed',
       'post172_profile_editor_above_dock': 'passed',
     };
-    binding.reportData!['ios_home_widgets'] = 'excluded_from_release_scope';
+    await probeIosWidgetTransport(binding);
     await probeIosTransferTransport(tester, binding);
 
     final directory = await (await getTemporaryDirectory()).createTemp(

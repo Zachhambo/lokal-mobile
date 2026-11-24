@@ -4,6 +4,7 @@ import 'package:flick/core/utils/lokal_layout.dart';
 import 'package:flick/features/player/widgets/lokal_player_columns.dart';
 
 import 'dart:math' as math;
+import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,13 +12,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flick/core/theme/lokal_appearance.dart';
 import 'package:flick/features/player/widgets/full_bleed_artwork_frame.dart';
 import 'package:flick/features/player/widgets/artwork_gradient_backdrop.dart';
-import 'package:flick/features/player/widgets/artwork_mesh_blur_backdrop.dart';
+import 'package:flick/features/player/widgets/player_song_blur_background.dart';
+
 import 'package:flick/features/player/widgets/full_player_visuals.dart';
 import 'package:flick/features/player/widgets/player_artwork_image.dart';
 import 'package:flick/features/player/widgets/player_transport_controls.dart';
 import 'package:flick/features/player/widgets/song_stage_carousel.dart';
 import 'package:flick/features/player/screens/desktop_remote_lyrics_panel.dart';
 import 'package:flick/features/queue/screens/queue_screen.dart';
+import 'package:flick/models/song.dart';
 import 'package:flick/models/lokal_remote_state.dart';
 import 'package:flick/l10n/l10n.dart';
 import 'package:flick/providers/lokal_remote_provider.dart';
@@ -38,10 +41,12 @@ class DesktopRemoteFullPlayer extends ConsumerStatefulWidget {
     super.key,
     required this.onClose,
     this.initialLyrics = false,
+    this.heroTag = 'album_art_hero',
   });
 
   final VoidCallback onClose;
   final bool initialLyrics;
+  final Object heroTag;
 
   @override
   ConsumerState<DesktopRemoteFullPlayer> createState() =>
@@ -85,6 +90,25 @@ class _DesktopRemoteFullPlayerState
 
   Future<void> _remotePrevious() =>
       ref.read(playerProvider.notifier).previousBySwipe();
+
+  /// Keep the remote cover paired with the mini-player Hero in both the
+  /// regular sleeve and fullscreen-poster layouts. The route's artwork portal
+  /// takes over when a measured source rect is available.
+  Widget _remoteCoverHero({
+    required Song track,
+    required Song current,
+    required Widget child,
+    required HeroFlightShuttleBuilder flightShuttleBuilder,
+  }) {
+    if (track.id != current.id) return child;
+    return Hero(
+      tag: widget.heroTag,
+      createRectTween: (begin, end) =>
+          LokalArtworkRectTween(begin: begin, end: end),
+      flightShuttleBuilder: flightShuttleBuilder,
+      child: child,
+    );
+  }
 
   final ScrollController _contentScroll = ScrollController();
   bool _contentOverflows = false;
@@ -266,13 +290,17 @@ class _DesktopRemoteFullPlayerState
             child: Stack(
               fit: StackFit.expand,
               children: [
-                // Reuse the local full player's continuous artwork ambience.
-                ArtworkGradientBackdrop(colors: colors, vibrant: true),
+                // Use the same complete-composition crossfade as local
+                // playback. Keeping palette and blurred artwork together
+                // prevents one layer changing before the other on track skips.
                 if (song != null)
-                  ArtworkMeshBlurBackdrop(
+                  PlayerSongBlurBackground(
                     song: song,
-                    preserveArtworkContrast: fullCover || tabletCover,
-                  ),
+                    colors: colors,
+                    fullCover: fullCover || tabletCover,
+                  )
+                else
+                  ArtworkGradientBackdrop(colors: colors, vibrant: true),
                 if (fullCover && song != null)
                   SongStageCarousel(
                     key: _coverCarouselKey,
@@ -284,19 +312,27 @@ class _DesktopRemoteFullPlayerState
                     buttonDissolve: true,
                     maskOutgoingOnDissolve: true,
                     allowUnresolvedSwipe: true,
-                    stageBuilder: (track) => FullBleedArtworkFrame(
-                      canvas: false,
-                      dimOnExpand: false,
-                      fadeOutCompletely: true,
-                      morphEnabled: track.id == song.id,
-                      child: PlayerArtworkImage(
-                        key: ValueKey('remote-full-cover:${track.id}'),
-                        song: track,
-                        radius: 0,
-                        crossfade: false,
-                        decodeWidth: 2048,
-                      ),
-                    ),
+                    stageBuilder: (track) {
+                      final frame = FullBleedArtworkFrame(
+                        canvas: false,
+                        dimOnExpand: false,
+                        fadeOutCompletely: true,
+                        morphEnabled: track.id == song.id,
+                        child: PlayerArtworkImage(
+                          key: ValueKey('remote-full-cover:${track.id}'),
+                          song: track,
+                          radius: 0,
+                          crossfade: false,
+                          decodeWidth: 2048,
+                        ),
+                      );
+                      return _remoteCoverHero(
+                        track: track,
+                        current: song,
+                        child: frame,
+                        flightShuttleBuilder: (_, __, ___, ____, _____) => frame,
+                      );
+                    },
                   ),
                 if (fullCover)
                   const IgnorePointer(
@@ -488,15 +524,44 @@ class _DesktopRemoteFullPlayerState
                                                   onPrevious: _remotePrevious,
                                                   buttonDissolve: true,
                                                   allowUnresolvedSwipe: true,
-                                                  stageBuilder: (track) =>
-                                                      PlayerArtworkImage(
-                                                        key: ValueKey(
-                                                          'desktop-cover:${track.id}',
-                                                        ),
-                                                        song: track,
-                                                        decodeWidth: 1024,
-                                                        radius: 24,
+                                                  stageBuilder: (track) {
+                                                    final artwork = PlayerArtworkImage(
+                                                      key: ValueKey(
+                                                        'desktop-cover:${track.id}',
                                                       ),
+                                                      song: track,
+                                                      decodeWidth: 1024,
+                                                      radius: 24,
+                                                    );
+                                                    return _remoteCoverHero(
+                                                      track: track,
+                                                      current: song,
+                                                      child: artwork,
+                                                      flightShuttleBuilder: (
+                                                        _,
+                                                        animation,
+                                                        __,
+                                                        ___,
+                                                        ____,
+                                                      ) => AnimatedBuilder(
+                                                        animation: animation,
+                                                        builder: (context, child) =>
+                                                            ClipRRect(
+                                                              borderRadius: BorderRadius.circular(
+                                                                lerpDouble(
+                                                                  21,
+                                                                  20,
+                                                                  Curves.easeInOutCubic.transform(
+                                                                    animation.value,
+                                                                  ),
+                                                                )!,
+                                                              ),
+                                                              child: child,
+                                                            ),
+                                                        child: artwork,
+                                                      ),
+                                                    );
+                                                  },
                                                 ),
                                               ),
                                             )

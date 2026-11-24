@@ -2,8 +2,13 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/services.dart';
+
 import '../sources/local_network_access.dart';
 import 'cast_lan_address.dart';
+import 'cast_source.dart';
+
+typedef _CastRelay = ({Uri uri, Map<String, String> headers, bool online});
 
 // ponytail: one-file embedded HTTP server so the renderer can pull bytes from
 // the phone. Covers local files and SMB/cached sources that have no LAN URL.
@@ -16,10 +21,61 @@ class CastContentServer {
   HttpServer? _server;
   int _epoch = 0;
   final Map<String, String> _paths = {};
-  final Map<String, ({Uri uri, Map<String, String> headers})> _relays = {};
+  final Map<String, Uint8List> _artwork = {};
+  final Map<String, _CastRelay> _relays = {};
   final Set<HttpClient> _clients = {};
   final Map<String, ContentType> _types = {};
   final _rand = Random.secure();
+
+  Future<void> syncStagingProtection() async {
+    if (!Platform.isAndroid) return;
+    await const MethodChannel('com.mossapps.flick/storage').invokeMethod<void>(
+      'setCastStagingPaths',
+      {'paths': _paths.values.toList()},
+    );
+  }
+
+  bool ownsUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (_server == null || uri == null || uri.port != _server!.port)
+      return false;
+    final token = uri.pathSegments.firstOrNull;
+    return _paths.containsKey(token) ||
+        _artwork.containsKey(token) ||
+        _relays.containsKey(token);
+  }
+
+  bool ownsFileUrl(String url) =>
+      ownsUrl(url) && _paths.containsKey(Uri.parse(url).pathSegments.first);
+
+  bool sameSource(String expected, String reported) {
+    if (expected == reported) return true;
+    final first = Uri.tryParse(expected);
+    final second = Uri.tryParse(reported);
+    if (first == null || second == null) return false;
+    if (first == second) return true;
+    // For Lokal's server only, the token identifies the bytes. The player
+    // may rewrite the optional display filename without changing the source.
+    return ownsUrl(expected) &&
+        ownsUrl(reported) &&
+        first.scheme == second.scheme &&
+        first.host == second.host &&
+        first.pathSegments.first == second.pathSegments.first;
+  }
+
+  /// Retain only the receiver's current queue window, including its covers.
+  /// Already-open file responses hold their own handles until they finish.
+  void retainUrls(Iterable<String> urls) {
+    final tokens = {
+      for (final url in urls)
+        if (ownsUrl(url)) Uri.parse(url).pathSegments.first,
+    };
+    _paths.removeWhere((token, _) => !tokens.contains(token));
+    _artwork.removeWhere((token, _) => !tokens.contains(token));
+    _relays.removeWhere((token, _) => !tokens.contains(token));
+    _types.removeWhere((token, _) => !tokens.contains(token));
+    if (Platform.isAndroid) syncStagingProtection().catchError((Object _) {});
+  }
 
   /// Serve [filePath] and return a LAN-reachable URL for it.
   Future<String> serve(
@@ -33,6 +89,14 @@ class CastContentServer {
     contentType: contentType,
     stillCurrent: stillCurrent,
   );
+
+  Future<String> serveJpeg(Uint8List bytes, {bool Function()? stillCurrent}) =>
+      _publish(
+        filename: 'cover.jpg',
+        artwork: bytes,
+        contentType: ContentType('image', 'jpeg'),
+        stillCurrent: stillCurrent,
+      );
 
   /// A receiver gets an opaque LAN URL. PC credentials stay on this phone;
   /// Range requests stream immediately instead of downloading the entire song.
@@ -50,7 +114,24 @@ class CastContentServer {
       throw ArgumentError('Cast relay requires an HTTP source.');
     return _publish(
       filename: filename,
-      remote: (uri: uri, headers: Map.unmodifiable(headers)),
+      remote: (uri: uri, headers: Map.unmodifiable(headers), online: false),
+      stillCurrent: stillCurrent,
+    );
+  }
+
+  Future<String> relayOnline(
+    Uri upstream, {
+    required String filename,
+    bool Function()? stillCurrent,
+  }) {
+    if (upstream.scheme != 'https' ||
+        receiverDirectUrl(upstream.toString()) == null) {
+      throw ArgumentError('Online Cast media requires a reachable HTTPS source.');
+    }
+    return _publish(
+      filename: filename,
+      remote: (uri: upstream, headers: const {}, online: true),
+      contentType: _contentTypeFor(filename),
       stillCurrent: stillCurrent,
     );
   }
@@ -58,7 +139,8 @@ class CastContentServer {
   Future<String> _publish({
     required String filename,
     String? filePath,
-    ({Uri uri, Map<String, String> headers})? remote,
+    Uint8List? artwork,
+    _CastRelay? remote,
     ContentType? contentType,
     bool Function()? stillCurrent,
   }) async {
@@ -88,8 +170,11 @@ class CastContentServer {
     if (!current()) throw StateError('Cast source was cancelled.');
     final token = _token();
     if (filePath != null) _paths[token] = filePath;
+    if (artwork != null) _artwork[token] = artwork;
     if (remote != null) _relays[token] = remote;
     if (contentType != null) _types[token] = contentType;
+    await syncStagingProtection();
+    if (!current()) throw StateError('Cast session ended.');
     final safe = Uri.encodeComponent(
       filename.replaceAll(RegExp(r'[^A-Za-z0-9._\- ]'), ''),
     );
@@ -99,12 +184,14 @@ class CastContentServer {
   Future<void> stop() async {
     ++_epoch;
     _paths.clear();
+    _artwork.clear();
     _relays.clear();
     for (final client in _clients.toList()) {
       client.close(force: true);
     }
     _clients.clear();
     _types.clear();
+    await syncStagingProtection().catchError((Object _) {});
     final server = _server;
     _server = null;
     await server?.close(force: true);
@@ -163,8 +250,9 @@ class CastContentServer {
         ? req.uri.pathSegments.first
         : '';
     final path = _paths[token];
+    final artwork = _artwork[token];
     final remote = _relays[token];
-    if (path == null && remote == null) {
+    if (path == null && artwork == null && remote == null) {
       req.response.statusCode = HttpStatus.notFound;
       await req.response.close();
       return;
@@ -191,16 +279,16 @@ class CastContentServer {
       return;
     }
     if (remote != null) {
-      await _relay(req, remote);
+      await _relay(req, remote, _types[token]);
       return;
     }
-    final file = File(path!);
-    if (!await file.exists()) {
+    final file = path == null ? null : File(path);
+    if (file != null && !await file.exists()) {
       req.response.statusCode = HttpStatus.notFound;
       await req.response.close();
       return;
     }
-    final total = await file.length();
+    final total = artwork?.length ?? await file!.length();
     // Range only applies to GET. Ignore unsupported/malformed/multipart ranges
     // rather than returning a partial body with incorrect framing (RFC 9110).
     final range = head ? null : req.headers.value(HttpHeaders.rangeHeader);
@@ -248,7 +336,7 @@ class CastContentServer {
 
     final length = end - start + 1;
     req.response.statusCode = status;
-    req.response.headers.contentType = _types[token] ?? _contentTypeFor(path);
+    req.response.headers.contentType = _types[token] ?? _contentTypeFor(path!);
     req.response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
     req.response.headers.set(HttpHeaders.contentLengthHeader, '$length');
     if (status == HttpStatus.partialContent) {
@@ -263,9 +351,15 @@ class CastContentServer {
       return;
     }
 
+    if (artwork != null) {
+      req.response.add(Uint8List.sublistView(artwork, start, end + 1));
+      await req.response.close();
+      return;
+    }
+
     // ponytail: chunked manual copy; StreamedResponse plumbing adds nothing
     // for a LAN-local single consumer.
-    final raf = await file.open();
+    final raf = await file!.open();
     try {
       await raf.setPosition(start);
       var remaining = length;
@@ -285,7 +379,8 @@ class CastContentServer {
 
   Future<void> _relay(
     HttpRequest request,
-    ({Uri uri, Map<String, String> headers}) remote,
+    _CastRelay remote,
+    ContentType? mediaType,
   ) async {
     final client = HttpClient()
       ..autoUncompress = false
@@ -301,19 +396,7 @@ class CastContentServer {
       },
     );
     try {
-      final upstreamRequest = await client
-          .openUrl(request.method, remote.uri)
-          .timeout(const Duration(seconds: 15));
-      // Credentials must never follow a desktop redirect to another origin.
-      upstreamRequest.followRedirects = false;
-      remote.headers.forEach(upstreamRequest.headers.set);
-      upstreamRequest.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
-      final range = request.headers.value(HttpHeaders.rangeHeader);
-      if (request.method == 'GET' &&
-          range != null &&
-          RegExp(r'^bytes=\d*-\d*$').hasMatch(range))
-        upstreamRequest.headers.set(HttpHeaders.rangeHeader, range);
-      final upstream = await upstreamRequest.close().timeout(
+      final upstream = await _openRelay(client, request, remote).timeout(
         const Duration(seconds: 15),
       );
       final encoding = upstream.headers.value(
@@ -348,6 +431,11 @@ class CastContentServer {
         final value = upstream.headers.value(header);
         if (value != null) request.response.headers.set(header, value);
       }
+      final upstreamType = request.response.headers.contentType?.mimeType;
+      if (mediaType != null &&
+          (upstreamType == null || upstreamType == 'application/octet-stream')) {
+        request.response.headers.contentType = mediaType;
+      }
       if (request.method != 'HEAD') {
         request.response.bufferOutput = false;
         await request.response.flush();
@@ -367,6 +455,41 @@ class CastContentServer {
       await request.response.close();
     }
   }
+
+  Future<HttpClientResponse> _openRelay(
+    HttpClient client,
+    HttpRequest request,
+    _CastRelay remote,
+  ) async {
+    var uri = remote.uri;
+    final range = request.headers.value(HttpHeaders.rangeHeader);
+    for (var hop = 0; ; hop++) {
+      // Provider-signed playback URLs can authorize GET only. For a receiver
+      // HEAD, read GET headers and close the upstream without copying its body.
+      final upstream = await client.openUrl(remote.online ? 'GET' : request.method, uri);
+      upstream.followRedirects = false;
+      remote.headers.forEach(upstream.headers.set);
+      upstream.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
+      if (request.method == 'GET' && range != null &&
+          RegExp(r'^bytes=\d*-\d*$').hasMatch(range)) {
+        upstream.headers.set(HttpHeaders.rangeHeader, range);
+      }
+      final response = await upstream.close();
+      // The authenticated desktop relay never follows redirects. Progressive
+      // public media can move between HTTPS hosts and carries no account headers.
+      if (!remote.online || !response.isRedirect || hop == 4) return response;
+      final location = response.headers.value(HttpHeaders.locationHeader);
+      if (location == null) return response;
+      final next = uri.resolve(location);
+      if (next.scheme != 'https' || receiverDirectUrl(next.toString()) == null) {
+        return response;
+      }
+      // Online providers return small redirect bodies. Cancel the old
+      // response so a slow body cannot delay opening the actual audio.
+      unawaited(response.listen((_) {}).cancel());
+      uri = next;
+    }
+  }
 }
 
 ContentType _contentTypeFor(String path) {
@@ -382,6 +505,7 @@ ContentType _contentTypeFor(String path) {
     'flac' => ContentType.parse('audio/flac'),
     'wav' => ContentType.parse('audio/wav'),
     'ogg' || 'oga' || 'opus' => ContentType.parse('audio/ogg'),
+    'webm' => ContentType.parse('audio/webm'),
     'm4a' || 'mp4' => ContentType.parse('audio/mp4'),
     'aac' => ContentType.parse('audio/aac'),
     'aiff' || 'aif' => ContentType.parse('audio/aiff'),

@@ -4,6 +4,7 @@ import 'package:flick/features/player/widgets/inline_lyrics_panel.dart';
 import 'package:flick/services/lyrics_service.dart';
 import 'package:flick/services/player_service.dart';
 import 'package:flick/l10n/l10n.dart';
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -307,8 +308,7 @@ class _RadioNowPlayingPageState extends ConsumerState<RadioNowPlayingPage>
 
   void _copy(String value) {
     unawaited(Clipboard.setData(ClipboardData(text: value)));
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
+    LokalToast.show(context, 'Copied to clipboard');
   }
 
   Future<void> _shareStation(RadioStation station) async {

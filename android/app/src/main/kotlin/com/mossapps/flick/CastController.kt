@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import android.os.Handler
 import android.os.Looper
+import android.view.KeyEvent
 import androidx.mediarouter.media.MediaRouteSelector
 import androidx.mediarouter.media.MediaRouter
 import com.google.android.gms.cast.CastMediaControlIntent
@@ -17,7 +18,7 @@ import com.google.android.gms.common.api.PendingResult
 import io.flutter.plugin.common.MethodChannel
 
 // ponytail: Cast driven via MediaRouter route selection + CastContext session.
-// Discovery = MediaRouter routes supporting remote playback; connect = selectRoute
+// Discovery scans for routes matching Lokal's Cast receiver; connect uses selectRoute
 // (CastContext creates the session); control = RemoteMediaClient on the session.
 // All interesting native state (session lifecycle, playback status, volume,
 // route changes) is forwarded to Dart via onEvent → cast_events channel.
@@ -49,6 +50,9 @@ class CastController(private val context: Context) {
     }
     private val receiverNamespace = "urn:x-cast:app.lokal.cast"
     private val handler = Handler(Looper.getMainLooper())
+    private val scanCallback = object : MediaRouter.Callback() {}
+    private val scanReplies = mutableListOf<(List<Map<String, Any>>) -> Unit>()
+    private var scanDeadline: Runnable? = null
 
     /** Called on the main thread for every cast event destined for Dart. */
     var onEvent: ((Map<String, Any?>) -> Unit)? = null
@@ -158,7 +162,8 @@ class CastController(private val context: Context) {
             }
         }
         override fun onRouteVolumeChanged(router: MediaRouter, route: MediaRouter.RouteInfo) {
-            if (route.playbackType == MediaRouter.RouteInfo.PLAYBACK_TYPE_REMOTE && route.volumeMax > 0) {
+            if (route.id == activeRouteId && route.isSelected &&
+                route.playbackType == MediaRouter.RouteInfo.PLAYBACK_TYPE_REMOTE && route.volumeMax > 0) {
                 emit(
                     mapOf(
                         "event" to "volume",
@@ -252,6 +257,7 @@ class CastController(private val context: Context) {
                 "position" to client.approximateStreamPosition,
                 "duration" to client.streamDuration,
                 "playing" to client.isPlaying,
+                "buffering" to client.isBuffering,
                 "loadId" to reportedIdentity.loadId,
                 "trackId" to reportedIdentity.trackId,
                 "finished" to (client.mediaStatus?.playerState == MediaStatus.PLAYER_STATE_IDLE && client.mediaStatus?.idleReason == MediaStatus.IDLE_REASON_FINISHED),
@@ -260,22 +266,35 @@ class CastController(private val context: Context) {
         )
     }
 
-    fun discover(): List<Map<String, Any>> {
-        // ponytail: MediaRouter exposes no selector-filtered getRoutes(); pull all
-        // and keep remote-playback routes (Cast devices surface here).
-        val routes = mediaRouter.routes
-        val out = mutableListOf<Map<String, Any>>()
-        for (r in routes) {
-            if (r.isDefault) continue
-            if (!r.matchesSelector(routeSelector)) continue
-            out.add(
-                mapOf(
-                    "id" to (r.id.toString()),
-                    "name" to (r.name?.toString() ?: "Chromecast"),
-                )
-            )
+    fun discover(reply: (List<Map<String, Any>>) -> Unit) {
+        if (castContext == null) {
+            reply(emptyList())
+            return
         }
-        return out
+        scanReplies.add(reply)
+        if (scanDeadline != null) return
+        // A route snapshot can be empty until an active Cast scan runs.
+        mediaRouter.addCallback(routeSelector, scanCallback, MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN)
+        val deadline = Runnable {
+            val devices = mediaRouter.routes
+                .filter { !it.isDefault && it.isEnabled && it.matchesSelector(routeSelector) }
+                .map { mapOf("id" to it.id, "name" to it.name.ifBlank { "Chromecast" }) }
+            finishDiscovery(devices)
+        }
+        scanDeadline = deadline
+        handler.postDelayed(deadline, 4000L)
+    }
+
+    fun cancelDiscovery() = finishDiscovery(emptyList())
+
+    private fun finishDiscovery(devices: List<Map<String, Any>>) {
+        val deadline = scanDeadline ?: return
+        handler.removeCallbacks(deadline)
+        mediaRouter.removeCallback(scanCallback)
+        scanDeadline = null
+        val replies = scanReplies.toList()
+        scanReplies.clear()
+        for (reply in replies) reply(devices)
     }
 
     fun connect(deviceId: String, result: MethodChannel.Result) {
@@ -446,6 +465,23 @@ class CastController(private val context: Context) {
     fun seek(positionMs: Long, result: MethodChannel.Result) = command(result) {
         it.seek(MediaSeekOptions.Builder().setPosition(positionMs.coerceAtLeast(0)).build())
     }
+    /** FlutterActivity pins volumeControlStream to local music. Route
+     * foreground volume keys explicitly; CAF keeps background ownership.
+     */
+    fun dispatchVolumeKey(event: KeyEvent): Boolean {
+        val route = mediaRouter.selectedRoute
+        val session = connectedSession ?: castContext?.sessionManager?.currentCastSession
+        val connected = session?.isConnected == true &&
+            session !== abandonedSession && !disconnectRequested &&
+            route.id == activeRouteId &&
+            route.volumeHandling == MediaRouter.RouteInfo.PLAYBACK_VOLUME_VARIABLE
+        return handleCastVolumeKey(event, connected) { direction ->
+            // Relative route commands preserve rapid/held key increments
+            // without calculating a new target from a stale session snapshot.
+            route.requestUpdateVolume(direction)
+        }
+    }
+
     fun setVolume(volume: Double, result: MethodChannel.Result) {
         // The UI and physical volume keys control *device* volume. CAF's
         // RemoteMediaClient.setStreamVolume is a separate per-track gain and
@@ -497,9 +533,16 @@ class CastController(private val context: Context) {
     }
 
     fun selectOutputRoute(deviceId: String): Boolean {
-        val target = mediaRouter.routes.firstOrNull { it.id.toString() == deviceId && it.playbackType == MediaRouter.RouteInfo.PLAYBACK_TYPE_LOCAL } ?: return false
+        // Explicit phone selection: Android's default local route must be
+        // selectable even though it is hidden from the list of other outputs.
+        val target = if (deviceId == "__phone__") mediaRouter.defaultRoute
+            else mediaRouter.routes.firstOrNull {
+                it.id.toString() == deviceId &&
+                    it.playbackType == MediaRouter.RouteInfo.PLAYBACK_TYPE_LOCAL
+            } ?: return false
+        if (target.playbackType != MediaRouter.RouteInfo.PLAYBACK_TYPE_LOCAL) return false
         mediaRouter.selectRoute(target)
-        return true
+        return target.isSelected
     }
 
     private fun outputTypeLabel(r: MediaRouter.RouteInfo): String {

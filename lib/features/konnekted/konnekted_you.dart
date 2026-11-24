@@ -1,4 +1,5 @@
 import 'package:flick/core/utils/lokal_layout.dart';
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flick/l10n/l10n.dart';
 import 'package:flick/core/utils/artist_credits.dart';
 
@@ -284,9 +285,7 @@ class _KonnektedYouState extends ConsumerState<KonnektedYou> {
       if (saved == true && mounted) ref.invalidate(localYouProfileProvider);
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('Could not open profile editor.')),
-      );
+      LokalToast.show(context, 'Could not open profile editor.');
     }
   }
 

@@ -64,6 +64,6 @@ struct LokalWidgetTimelineProvider: TimelineProvider {
   }
 
   private var configuredGroup: String? {
-    Bundle.main.object(forInfoDictionaryKey: "LokalWidgetAppGroup") as? String
+    LokalWidgetGroup.identifier()
   }
 }

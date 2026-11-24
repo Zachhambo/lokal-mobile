@@ -22,7 +22,12 @@ import '../services/link/link_journal.dart';
 import '../services/link/link_sync_coordinator.dart';
 import '../services/link/link_profile_service.dart';
 import '../services/link/link_file_copy.dart';
+import '../services/link/desktop_track_copy_command.dart';
+import '../services/link/phone_command_queue.dart';
+import '../services/link/desktop_catalogue_import.dart';
 import '../services/link/lokal_desktop_source.dart';
+import '../core/navigation/root_navigator.dart';
+import '../widgets/lokal/lokal_toast.dart';
 import 'favorites_provider.dart';
 import 'playlist_provider.dart';
 import '../core/theme/lokal_appearance.dart';
@@ -30,9 +35,12 @@ import '../core/theme/lokal_appearance.dart';
 import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter/widgets.dart' show AppLifecycleListener;
+import 'package:isar_community/isar.dart';
+import 'package:flutter/widgets.dart'
+    show AppLifecycleListener, AppLifecycleState, WidgetsBinding;
 
 import '../models/lokal_remote_state.dart';
+import '../l10n/l10n.dart';
 import '../services/lokal_remote_credentials_store.dart';
 import '../services/lokal_remote_service.dart';
 
@@ -67,6 +75,13 @@ final lokalRemoteControllerProvider =
     NotifierProvider<LokalRemoteController, LokalRemoteControllerState>(
       LokalRemoteController.new,
     );
+
+class _IncomingDesktopCopyFailure implements Exception {
+  const _IncomingDesktopCopyFailure(this.message, this.unattemptedIds);
+
+  final String message;
+  final List<String> unattemptedIds;
+}
 
 /// The desktop can publish a new track before its playback engine updates
 /// the top-level duration. Prefer the recording's own metadata when present,
@@ -132,11 +147,13 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
   LokalRemoteCredentials? _credentials;
   Future<void>? _restoreTask;
   Future<void> _commandTail = Future<void>.value();
+  final _incomingCommands = IncomingPhoneCommandQueue();
   var _polling = false;
   bool _syncInFlight = false;
   var _shouldPoll = false;
   var _failures = 0;
   var _generation = 0;
+  var _lifecycleEpoch = 0;
   var _configurationRevision = 0;
   var _disposed = false;
 
@@ -149,7 +166,10 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     final connections = link.connections.listen(_socketConnectionChanged);
     var wasBackgrounded = false;
     final lifecycle = AppLifecycleListener(
-      onPause: () => wasBackgrounded = true,
+      onPause: () {
+        wasBackgrounded = true;
+        _lifecycleEpoch++;
+      },
       onResume: () {
         if (!wasBackgrounded) return;
         wasBackgrounded = false;
@@ -659,6 +679,25 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     );
   }
 
+  Future<void> sendSongToDesktop(Song song) async {
+    final credentials = _credentials;
+    final socket = ref.read(lokalLinkServiceProvider);
+    if (credentials == null || !state.socketConnected || !socket.connected) {
+      throw const LokalRemoteProtocolException(
+        'Reconnect to your paired desktop to send songs.',
+      );
+    }
+    if (song.filePath == null ||
+        song.filePath!.isEmpty ||
+        song.isExternal ||
+        song.isNetworkSource) {
+      throw const LokalRemoteProtocolException(
+        'This song has no local audio file to send.',
+      );
+    }
+    await LokalDesktopSource.instance.uploadToDesktop(song, credentials);
+  }
+
   Future<void> _connectSocket() async {
     final credentials = _credentials;
     if (credentials == null || _disposed || !_shouldPoll) return;
@@ -825,21 +864,13 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         _refreshSocketSnapshot();
         break;
       case 'command':
-        unawaited(() async {
-          try {
-            await _handlePhoneCommand(message.body);
-            if (!_disposed && ref.read(lokalLinkServiceProvider).connected)
-              ref.read(lokalLinkServiceProvider).send('ack', {
-                'ok': true,
-              }, id: message.id);
-          } catch (_) {
-            if (!_disposed && ref.read(lokalLinkServiceProvider).connected)
-              ref.read(lokalLinkServiceProvider).send('ack', {
-                'ok': false,
-                'error': 'The phone could not complete this command.',
-              }, id: message.id);
-          }
-        }());
+        unawaited(
+          _queuePhoneCommand(
+            message.body,
+            message.id,
+            ref.read(lokalLinkServiceProvider).connectionGeneration,
+          ),
+        );
         break;
       case 'theme':
         unawaited(_receiveTheme(message.body));
@@ -956,6 +987,110 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     }
   }
 
+  Future<void> _queuePhoneCommand(
+    Map<String, dynamic> body,
+    String? messageId,
+    int connectionGeneration,
+  ) async {
+    bool isCurrent() => _isConnectionGenerationCurrent(connectionGeneration);
+    Future<void> process() async {
+      await runIncomingPhoneCommand(
+        isCurrent: isCurrent,
+        handle: () => _handlePhoneCommand(
+          body,
+          connectionGeneration: connectionGeneration,
+        ),
+        acknowledgeSuccess: () async {
+          if (body['action'] == 'copyTracksToPhone') {
+            final message = state.transferMessage;
+            if (message != null) {
+              _showTransferToast(message, error: state.transferHasError);
+            }
+          }
+          if (!isCurrent()) return;
+          ref.read(lokalLinkServiceProvider).send('ack', {
+            'ok': true,
+          }, id: messageId);
+        },
+        acknowledgeFailure: (error) async {
+          final transfer = body['action'] == 'copyTracksToPhone';
+          final detail = switch (error) {
+            _IncomingDesktopCopyFailure(:final message) => message,
+            LokalRemoteException(:final message) =>
+              transfer ? _localizeDesktopTransferError(message) : message,
+            FormatException(:final message) =>
+              transfer
+                  ? _localizeDesktopTransferError(message.toString())
+                  : message.toString(),
+            _ =>
+              transfer
+                  ? lokalText(
+                      'Desktop transfer failed: {arg0}',
+                      args: {
+                        'arg0': 'The phone could not complete this command.',
+                      },
+                    )
+                  : 'The phone could not complete this command.',
+          };
+          if (transfer) {
+            state = state.copyWith(
+              transferMessage: detail.length > 500
+                  ? detail.substring(0, 500)
+                  : detail,
+              transferHasError: true,
+            );
+            _showTransferToast(state.transferMessage!, error: true);
+          }
+          if (!isCurrent()) return;
+          final failure = error is _IncomingDesktopCopyFailure ? error : null;
+          final ack = transfer && failure != null
+              ? desktopTrackCopyFailureAck(
+                  error: detail,
+                  unattemptedIds: failure.unattemptedIds,
+                )
+              : {
+                  'ok': false,
+                  'error': detail.length > 300
+                      ? detail.substring(0, 300)
+                      : detail,
+                };
+          ref.read(lokalLinkServiceProvider).send('ack', ack, id: messageId);
+        },
+      );
+    }
+
+    await _incomingCommands.enqueue(
+      transfer: body['action'] == 'copyTracksToPhone',
+      operation: process,
+    );
+  }
+
+  String _localizeDesktopTransferError(String message) => switch (message) {
+    'Choose between 1 and 100 desktop songs to copy.' => lokalText(
+      'Choose between 1 and 100 desktop songs to copy.',
+    ),
+    'The desktop song list is invalid.' => lokalText(
+      'The desktop song list is invalid.',
+    ),
+    'Keep Lokal open in the foreground to copy songs.' => lokalText(
+      'Keep Lokal open in the foreground to copy songs.',
+    ),
+    'Reconnect to your paired desktop to copy songs.' => lokalText(
+      'Reconnect to your paired desktop to copy songs.',
+    ),
+    _ => lokalText('Desktop transfer failed: {arg0}', args: {'arg0': message}),
+  };
+
+  void _showTransferToast(String message, {required bool error}) {
+    final context = rootNavigatorKey.currentState?.overlay?.context;
+    if (context == null) return;
+    LokalToast.show(
+      context,
+      message,
+      duration: Duration(seconds: error ? 6 : 4),
+    );
+  }
+
   void _publishLocalState() {
     final socket = ref.read(lokalLinkServiceProvider);
     if (!socket.connected || !Database.isInitialized) return;
@@ -998,12 +1133,20 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     });
   }
 
-  Future<void> _handlePhoneCommand(Map<String, dynamic> body) async {
+  Future<void> _handlePhoneCommand(
+    Map<String, dynamic> body, {
+    required int connectionGeneration,
+  }) async {
     final player = PlayerService(),
         action = body['action'],
         value = body['value'];
-    if (state.controlsDesktop && action != 'handoffToDesktop')
+    if (state.controlsDesktop &&
+        action != 'handoffToDesktop' &&
+        action != 'copyTracksToPhone') {
       await setDesktopTarget(false);
+      if (!_isConnectionGenerationCurrent(connectionGeneration)) return;
+    }
+    if (!_isConnectionGenerationCurrent(connectionGeneration)) return;
     switch (action) {
       case 'togglePlay':
         await player.togglePlayPause();
@@ -1061,11 +1204,139 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         if (value is! Map) throw const FormatException('Invalid handoff.');
         await _receiveHandoff(Map<String, dynamic>.from(value));
         break;
+      case 'copyTracksToPhone':
+        await _receiveDesktopTrackCopies(value, connectionGeneration);
+        break;
       default:
         throw const FormatException('Unsupported phone command.');
     }
+    if (!_isConnectionGenerationCurrent(connectionGeneration)) return;
     _publishLocalState();
   }
+
+  Future<void> _receiveDesktopTrackCopies(
+    Object? payload,
+    int connectionGeneration,
+  ) async {
+    if (payload is! Map || payload['tracks'] is! List) {
+      throw const FormatException('The desktop song list is invalid.');
+    }
+    final ids = validateDesktopTrackCopyIds(payload['tracks']);
+    final credentials = _credentials;
+    final socket = ref.read(lokalLinkServiceProvider);
+    if (credentials == null ||
+        !state.socketConnected ||
+        !socket.connected ||
+        !_isConnectionGenerationCurrent(connectionGeneration)) {
+      throw const LokalRemoteProtocolException(
+        'Reconnect to your paired desktop to copy songs.',
+      );
+    }
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      throw const LokalRemoteProtocolException(
+        'Keep Lokal open in the foreground to copy songs.',
+      );
+    }
+    final lifecycleEpoch = _lifecycleEpoch;
+    final source = LokalDesktopSource.instance;
+    final server = await source.ensureServer(credentials);
+    if (!_isConnectionGenerationCurrent(connectionGeneration)) return;
+    state = state.copyWith(
+      transferMessage: lokalText(
+        'Preparing {arg0} songs from desktop…',
+        args: {'arg0': ids.length},
+      ),
+      transferHasError: false,
+    );
+    final result = await copyDesktopCatalogueTracks(
+      requestedIds: ids,
+      loadCatalogue: () => source.lookupCatalogueTracks(credentials, ids),
+      isAlreadyPresent: (id) async {
+        final rows = await Database.songs
+            .filter()
+            .remoteServerIdEqualTo(server.id)
+            .remoteIdEqualTo(id)
+            .findAll();
+        return rows.any(isDownloadedDesktopOriginal);
+      },
+      copyTrack: (track) => source.copyOriginalToPhone(server, track),
+      shouldContinue: () =>
+          _isDesktopCopyCurrent(connectionGeneration, lifecycleEpoch),
+      onProgress: (progress) {
+        if (!_isConnectionGenerationCurrent(connectionGeneration)) return;
+        state = state.copyWith(
+          transferMessage: lokalText(
+            'Copying {arg0} of {arg1} songs from desktop…',
+            args: {'arg0': progress.processed, 'arg1': progress.total},
+          ),
+          transferHasError: false,
+        );
+      },
+    );
+    if (!_isConnectionGenerationCurrent(connectionGeneration)) return;
+    if (result.failures.isNotEmpty || result.unattemptedIds.isNotEmpty) {
+      final completed = result.copied + result.alreadyPresent;
+      final failures = <String>[
+        if (result.unattemptedIds.isNotEmpty)
+          lokalText(
+            'Lokal moved to background; remaining tracks were not started.',
+          ),
+        ...result.failures.take(3),
+      ].join('; ');
+      final more = result.failures.length > 3
+          ? lokalText(
+              '; and {arg0} more',
+              args: {'arg0': result.failures.length - 3},
+            )
+          : '';
+      final detail = lokalText(
+        'Copied {arg0} of {arg1} songs from desktop. {arg2}{arg3}',
+        args: {
+          'arg0': completed,
+          'arg1': result.requested,
+          'arg2': failures,
+          'arg3': more,
+        },
+      );
+      state = state.copyWith(
+        transferMessage: detail.length > 500
+            ? detail.substring(0, 500)
+            : detail,
+        transferHasError: true,
+      );
+      throw _IncomingDesktopCopyFailure(detail, result.unattemptedIds);
+    }
+    final already = result.alreadyPresent == 0
+        ? ''
+        : lokalText(
+            ' {arg0} already on this phone.',
+            args: {'arg0': result.alreadyPresent},
+          );
+    state = state.copyWith(
+      transferMessage: lokalText(
+        'Copied {arg0} songs from desktop.{arg1}',
+        args: {'arg0': result.copied, 'arg1': already},
+      ),
+      transferHasError: false,
+    );
+  }
+
+  bool _isConnectionGenerationCurrent(int generation) {
+    if (_disposed) return false;
+    final link = ref.read(lokalLinkServiceProvider);
+    return isIncomingPhoneCommandCurrent(
+      expectedGeneration: generation,
+      currentGeneration: link.connectionGeneration,
+      connected: link.connected,
+      shouldPoll: _shouldPoll,
+      disposed: _disposed,
+    );
+  }
+
+  bool _isDesktopCopyCurrent(int generation, int lifecycleEpoch) =>
+      _lifecycleEpoch == lifecycleEpoch &&
+      WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed &&
+      _isConnectionGenerationCurrent(generation);
 
   Future<void> playOnDesktop() async {
     final player = PlayerService(), queue = player.queueNotifier.value;

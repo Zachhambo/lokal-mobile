@@ -9,6 +9,7 @@ import '../../data/repositories/song_repository.dart';
 import '../../models/song.dart';
 import '../../models/playlist.dart';
 import 'link_protocol.dart';
+import 'link_favorite_snapshot.dart';
 
 /// Local append-only logs. Pairing never clears or replaces the phone's library.
 class LinkJournal {
@@ -161,9 +162,10 @@ class LinkJournal {
     String entity,
     String entityId,
     String op,
-    Map<String, dynamic> fields,
-  ) async {
-    if (!Database.isInitialized || applyingRemote) return;
+    Map<String, dynamic> fields, {
+    bool explicitEdit = false,
+  }) async {
+    if (!Database.isInitialized || (applyingRemote && !explicitEdit)) return;
     await _serial(() async {
       final prefs = await SharedPreferences.getInstance();
       final clock = nextLinkClock(prefs.getString('lokal.link.hlc') ?? '');
@@ -191,17 +193,55 @@ class LinkJournal {
     final songs = {
       for (final song in await SongRepository().getAllSongs()) song.id: song,
     };
-    for (final id in {...ids, ...previous})
-      if (ids.contains(id) != previous.contains(id) && songs[id] != null) {
-        final song = songs[id]!;
-        await append(
-          'like',
-          await trackKeyFor(song),
-          ids.contains(id) ? 'like' : 'unlike',
-          songWire(song),
-        );
+    Map<String, dynamic> snapshots = {};
+    try {
+      final raw = jsonDecode(
+        prefs.getString('favorite_online_song_metadata_v1') ?? '{}',
+      );
+      if (raw is Map) snapshots = Map<String, dynamic>.from(raw);
+    } catch (_) {
+      // A corrupt display snapshot must not suppress ordinary local likes.
+    }
+
+    // Keep unsent changes pending. Old versions advanced this baseline even
+    // when online-only likes were skipped. Revisit those IDs once on upgrade.
+    final migrate = prefs.getBool('lokal.link.favorites_snapshot_v2') != true;
+    final synchronized = linkFavoriteBaselineAfterUpgrade(
+      previous,
+      likedIds: ids,
+      catalogIds: songs.keys.toSet(),
+      migrate: migrate,
+    );
+    for (final id in {...ids, ...previous}) {
+      final liked = ids.contains(id);
+      if (liked == synchronized.contains(id)) continue;
+      final wire = await linkFavoriteWire(
+        id,
+        library: songs,
+        snapshots: snapshots,
+        trackKeyFor: trackKeyFor,
+        songWire: songWire,
+      );
+      if (wire == null) continue;
+      await append(
+        'like',
+        wire['track_key'] as String,
+        liked ? 'like' : 'unlike',
+        wire,
+      );
+      if (liked) {
+        synchronized.add(id);
+      } else {
+        synchronized.remove(id);
       }
-    await prefs.setStringList('lokal.link.favorites_snapshot', ids.toList());
+    }
+    await prefs.setStringList(
+      'lokal.link.favorites_snapshot',
+      synchronized.toList(),
+    );
+    if (migrate) {
+      await prefs.setBool('lokal.link.favorites_snapshot_v2', true);
+    }
   }
 
   Future<String> playlistUuid(String localId) async {
@@ -370,6 +410,34 @@ class LinkJournal {
       await prefs.setString('lokal.link.hlc', clock);
       return accepted;
     });
+  }
+
+  Future<Map<String, dynamic>?> latestVideoClipEdit(Song song) async {
+    if (!Database.isInitialized) return null;
+    final key = await trackKeyFor(song);
+    final rows = await Database.instance.libraryOpEntitys
+        .filter()
+        .entityIdEqualTo(key)
+        .opEqualTo('track.edit')
+        .findAll();
+    if (rows.isEmpty) return null;
+    final localDevice = await deviceId();
+    String? newest;
+    Map<String, dynamic>? result;
+    for (final row in rows) {
+      final stamp = '${row.hlc}:${row.deviceId}:${row.opId}';
+      if (newest != null && stamp.compareTo(newest) <= 0) continue;
+      final fields = jsonDecode(row.fieldsJson) as Map<String, dynamic>;
+      if (!fields.containsKey('video_clip')) continue;
+      final track = fields['track'];
+      if (row.deviceId == localDevice && track is Map &&
+          track['id'] != song.id) {
+        continue;
+      }
+      newest = stamp;
+      result = fields;
+    }
+    return result;
   }
 
   Future<bool> wins(Map<String, dynamic> item, String field) async {

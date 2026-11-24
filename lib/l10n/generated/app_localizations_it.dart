@@ -10,10 +10,6 @@ class AppLocalizationsIt extends AppLocalizations {
   AppLocalizationsIt([String locale = 'it']) : super(locale);
 
   @override
-  String get aLittleRecordOfWhatStayed =>
-      'Un piccolo resoconto di ciò che è rimasto ripetuto.';
-
-  @override
   String get aNewerFlickBuildIsOn =>
       'Una build Lokal più recente è sul Play Store.';
 
@@ -2649,9 +2645,6 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get keepTheSessionMovingOrHead =>
       'Mantieni la sessione in movimento o torna direttamente al giocatore.';
-
-  @override
-  String get keepYourReplay => 'Conserva la tua riproduzione.';
 
   @override
   String keeping(Object type, Object br) {

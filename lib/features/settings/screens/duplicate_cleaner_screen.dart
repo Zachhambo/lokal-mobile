@@ -890,35 +890,11 @@ class _BottomActionBar extends ConsumerWidget {
     }
     if (!context.mounted) return;
     if (result != null) {
-      LokalToast.fromSnackBar(
+      LokalToast.show(
         context,
-        SnackBar(
-          backgroundColor: context.lokal.surface2,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppConstants.radiusMd),
-          ),
-          content: Row(
-            children: [
-              Icon(LucideIcons.check, size: 18, color: context.lokal.accent),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  l10n.removedDuplicatesKept(
-                    result.removedCount,
-                    result.keptCount,
-                  ),
-                  style: TextStyle(
-                    fontFamily: LokalTheme.sans,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: context.lokal.text,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+        l10n.removedDuplicatesKept(result.removedCount, result.keptCount),
+        duration: const Duration(seconds: 4),
+        leading: Icon(LucideIcons.check, size: 18, color: context.lokal.accent),
       );
     }
   }
@@ -953,32 +929,11 @@ class _BottomActionBar extends ConsumerWidget {
     if (!context.mounted || ref.read(duplicateScanProvider).error != null) {
       return;
     }
-    LokalToast.fromSnackBar(
+    LokalToast.show(
       context,
-      SnackBar(
-        backgroundColor: context.lokal.surface2,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppConstants.radiusMd),
-        ),
-        content: Row(
-          children: [
-            Icon(LucideIcons.check, size: 18, color: context.lokal.accent),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                l10n.duplicatesRemovedUsingRecommendedPicks,
-                style: TextStyle(
-                  fontFamily: LokalTheme.sans,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: context.lokal.text,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+      l10n.duplicatesRemovedUsingRecommendedPicks,
+      duration: const Duration(seconds: 4),
+      leading: Icon(LucideIcons.check, size: 18, color: context.lokal.accent),
     );
   }
 }
@@ -1345,38 +1300,14 @@ class _DuplicateGroupCardState extends ConsumerState<_DuplicateGroupCard> {
                                     .read(duplicateScanProvider.notifier)
                                     .toggleKeep(widget.group.key, song.id);
                                 if (!ok && context.mounted) {
-                                  LokalToast.fromSnackBar(
+                                  LokalToast.show(
                                     context,
-                                    SnackBar(
-                                      backgroundColor: context.lokal.surface2,
-                                      behavior: SnackBarBehavior.floating,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(
-                                          AppConstants.radiusMd,
-                                        ),
-                                      ),
-                                      content: Row(
-                                        children: [
-                                          Icon(
-                                            LucideIcons.info,
-                                            size: 16,
-                                            color: context.lokal.orange,
-                                          ),
-                                          SizedBox(width: 8),
-                                          Expanded(
-                                            child: Text(
-                                              l10n.atLeastOneVersionMustStay,
-                                              style: TextStyle(
-                                                fontFamily: LokalTheme.sans,
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w600,
-                                                color: context.lokal.text,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      duration: const Duration(seconds: 2),
+                                    l10n.atLeastOneVersionMustStay,
+                                    duration: const Duration(seconds: 2),
+                                    leading: Icon(
+                                      LucideIcons.info,
+                                      size: 16,
+                                      color: context.lokal.orange,
                                     ),
                                   );
                                 }

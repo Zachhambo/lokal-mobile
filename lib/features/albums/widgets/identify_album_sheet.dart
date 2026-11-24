@@ -1,3 +1,4 @@
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -32,7 +33,6 @@ class IdentifyAlbumSheet extends ConsumerStatefulWidget {
     String? initialArtist,
     String? initialAlbum,
   }) async {
-    final messenger = ScaffoldMessenger.maybeOf(context);
     final result = await showModalBottomSheet<AlbumIdentificationApplyResult>(
       useRootNavigator: true,
       context: context,
@@ -53,20 +53,11 @@ class IdentifyAlbumSheet extends ConsumerStatefulWidget {
       ),
     );
 
-    if (!context.mounted || messenger == null || result == null) {
+    if (!context.mounted || result == null) {
       return result;
     }
     final artworkNote = result.artworkApplied ? l10n.andArtwork : '';
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            l10n.identified(result.updatedSongs, artworkNote),
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    LokalToast.show(context, l10n.identified(result.updatedSongs, artworkNote));
     return result;
   }
 

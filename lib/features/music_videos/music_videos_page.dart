@@ -1,3 +1,7 @@
+import '../../services/link/copied_track_clip.dart';
+import 'copied_track_clip_page.dart';
+
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flick/features/library_jobs/library_jobs.dart';
 import 'package:flick/features/library_jobs/library_job_control.dart';
 
@@ -81,7 +85,7 @@ class MusicVideosPage extends ConsumerWidget {
                 return _VideoTile(
                   song: song,
                   videoId: id,
-                  onTap: () => openMusicVideo(context, song, id),
+                  onTap: () => watchMusicVideo(context, song),
                 );
               },
             ),
@@ -162,23 +166,26 @@ class _VideoTile extends StatelessWidget {
 /// "Watch video" for a song menu: finds the video (remembered or a search)
 /// and opens it, or says there is none. Only offered while videos are on.
 Future<void> watchMusicVideo(BuildContext context, Song song) async {
-  final messenger = ScaffoldMessenger.maybeOf(context);
+  final clip = await CopiedTrackClip.forSong(song);
+  if (!context.mounted) return;
+  if (clip != null) {
+    await openCopiedTrackClip(context, song, clip);
+    return;
+  }
   final container = ProviderScope.containerOf(context, listen: false);
   String? id;
   try {
     id = await container.read(musicVideoIndexProvider.notifier).find(song);
   } catch (_) {
-    messenger?.showSnackBar(
-      const SnackBar(content: Text('Couldn’t reach YouTube Music.')),
-    );
-    return;
-  }
-  if (id == null) {
-    messenger?.showSnackBar(
-      const SnackBar(content: Text('No official video found for this song.')),
-    );
+    if (context.mounted) {
+      LokalToast.show(context, 'Couldn’t reach YouTube Music.');
+    }
     return;
   }
   if (!context.mounted) return;
+  if (id == null) {
+    LokalToast.show(context, 'No official video found for this song.');
+    return;
+  }
   await openMusicVideo(context, song, id);
 }

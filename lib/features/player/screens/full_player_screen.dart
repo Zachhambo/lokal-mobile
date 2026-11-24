@@ -13,12 +13,14 @@ import 'package:flick/providers/lokal_remote_provider.dart';
 import 'dart:io';
 
 import 'package:flick/core/theme/lokal_performance_scope.dart';
+import 'package:flick/features/music_videos/copied_track_clip_page.dart';
 import 'package:flick/features/music_videos/media3_music_video_surface.dart';
 import 'package:flick/features/internet_radio/radio_providers.dart';
 import 'package:flick/features/internet_radio/radio_now_playing_page.dart';
 import 'package:flick/features/music_videos/video_quality_settings.dart';
 import 'package:flick/features/music_videos/music_video_providers.dart';
 import 'package:flick/providers/opt_in_source_provider.dart';
+import 'package:flick/services/link/copied_track_clip.dart';
 import 'package:flick/features/player/widgets/full_player_visuals.dart';
 import 'package:flick/features/player/widgets/full_bleed_artwork_frame.dart';
 import 'package:flick/features/player/widgets/full_player_identity_layout.dart';
@@ -35,6 +37,7 @@ import '../widgets/lyrics_save_button.dart';
 import '../widgets/player_panel_stage.dart';
 import '../widgets/motion_art_widget.dart';
 
+import 'package:flick/services/playback_source_priority.dart';
 import 'package:flick/services/motion_art/moving_cover_settings.dart';
 import 'package:flick/services/motion_art/moving_cover_availability.dart';
 import 'package:flick/services/motion_art/animated_artwork_service.dart';
@@ -92,7 +95,6 @@ import 'package:flick/features/player/widgets/full_player_song_menu.dart';
 import 'package:flick/features/konnekted/library/lokal_navigation.dart';
 import 'package:flick/features/player/widgets/song_metadata_sheet.dart';
 import 'package:flick/features/player/widgets/speed_bottom_sheet.dart';
-import 'package:flick/features/settings/screens/casting_settings_screen.dart';
 import 'package:flick/features/settings/screens/equalizer_screen.dart';
 import 'package:flick/l10n/l10n.dart';
 import 'package:flick/models/audio_output_diagnostics.dart';
@@ -1343,10 +1345,6 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
   Future<void> _openEqualizer() => Navigator.of(context)
       .push(MaterialPageRoute<void>(builder: (_) => const EqualizerScreen()));
 
-  Future<void> _openCasting() => Navigator.of(context).push(
-    MaterialPageRoute<void>(builder: (_) => const CastingSettingsScreen()),
-  );
-
   /// Keep track-specific menu actions aligned with the live recording.
   Future<void> _openMore(Song song) =>
       showFullPlayerSongMenu(context, song: song, player: _player);
@@ -1365,6 +1363,7 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
       return DesktopRemoteFullPlayer(
         onClose: _close,
         initialLyrics: widget.initialLyrics,
+        heroTag: widget.heroTag,
       );
     }
     // Stations share this exact spring-driven player route with local music
@@ -1828,10 +1827,9 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
       deviceLabel: displayLabel,
       brightArtwork: brightArtwork,
       outputIcon: outputIcon,
-      isCasting: isCasting,
+      song: song,
       onClose: _close,
       onOutput: () => unawaited(PlaybackOutputPicker.show(context)),
-      onCast: _openCasting,
       onMore: () => unawaited(_openMore(song)),
     );
   }
@@ -3070,16 +3068,35 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
                 active: true,
                 width: (constraints.maxWidth - 8) / 4,
               )
-            else if (ref.watch(musicVideosEnabledProvider))
-              if (_player.currentSongNotifier.value case final current?)
-                if (ref.watch(musicVideoIndexProvider).videoFor(current.id)
-                    case final videoId?)
-                  chip(
-                    LucideIcons.video,
-                    'Video',
-                    () => unawaited(_enterVideoMode(current, videoId)),
-                    width: (constraints.maxWidth - 8) / 4,
+            else if (_player.currentSongNotifier.value case final current?)
+              ValueListenableBuilder(
+                valueListenable: CopiedTrackClip.revision,
+                builder: (context, _, _) => FutureBuilder(
+                  key: ValueKey(current.id),
+                  future: CopiedTrackClip.forSong(current),
+                  builder: (context, snapshot) => Consumer(
+                    builder: (context, ref, _) {
+                      final clip = snapshot.data;
+                      final automatic = ref.watch(musicVideosEnabledProvider)
+                          ? ref.watch(musicVideoIndexProvider).videoFor(current.id)
+                          : null;
+                      if (clip == null && automatic == null) {
+                        return const SizedBox.shrink();
+                      }
+                      return chip(
+                        LucideIcons.video,
+                        'Video',
+                        () => unawaited(
+                          clip == null
+                              ? _enterVideoMode(current, automatic!)
+                              : openCopiedTrackClip(context, current, clip),
+                        ),
+                        width: (constraints.maxWidth - 8) / 4,
+                      );
+                    },
                   ),
+                ),
+              ),
             ValueListenableBuilder<Duration?>(
               valueListenable: _player.sleepTimerRemainingNotifier,
               builder: (_, remaining, __) => chip(
@@ -3100,6 +3117,7 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
                     movingCoverRevision,
                     SecureSpotifyTokenStore.sessionRevision,
                     AnimatedArtworkService.instance.revision,
+                    EcoDataMode.revision,
                   ]),
                   builder: (context, _) => Consumer(
                     builder: (context, coverRef, _) {
@@ -3114,6 +3132,7 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
                               SecureSpotifyTokenStore.sessionRevision.value,
                           artworkRevision:
                               AnimatedArtworkService.instance.revision.value,
+                          networkRevision: EcoDataMode.revision.value,
                         )),
                       );
                       if (available.value != true)

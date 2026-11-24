@@ -22,10 +22,12 @@ class MovingCoverService {
     SpotifyCanvasService? spotify,
     MotionArtOfflineCache? offlineCache,
     Future<bool> Function()? ecoActive,
+    Future<bool> Function()? offline,
   }) : _client = client ?? GracefulHttpClient(),
        _apple = apple ?? AnimatedArtworkService.instance,
        _offlineCache = offlineCache ?? MotionArtOfflineCache.instance,
-       _ecoActive = ecoActive ?? EcoDataMode.activeOnCellular {
+       _ecoActive = ecoActive ?? EcoDataMode.activeOnCellular,
+       _offline = offline ?? EcoDataMode.isOffline {
     _spotify = spotify ?? SpotifyCanvasService(client: _client);
   }
   static final instance = MovingCoverService();
@@ -33,9 +35,11 @@ class MovingCoverService {
   final AnimatedArtworkService _apple;
   final MotionArtOfflineCache _offlineCache;
   final Future<bool> Function() _ecoActive;
+  final Future<bool> Function() _offline;
   late final SpotifyCanvasService _spotify;
   final _cache = <String, (DateTime, MotionArtLookup)>{};
   final _jobs = <String, Future<MotionArtLookup>>{};
+  final _warming = <String>{};
   String? _jwt;
   DateTime _jwtExpires = DateTime(2000);
   DateTime _jwtRetry = DateTime(2000);
@@ -44,10 +48,19 @@ class MovingCoverService {
   static const _ua =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36';
 
-  /// Disk lookup keys deliberately exclude in-process revision counters, so
-  /// cached clips survive app restarts and Spotify session refreshes. They do
-  /// include the enabled source order so source preference changes are obeyed.
+  /// Stable per-source indexes survive changes to provider priority, session
+  /// renewal and airplane mode. Other providers stay opt-in: a cached Spotify
+  /// Canvas must not override Apple when Spotify is disabled in Appearance.
   String _offlineKey(
+    String title,
+    String artist,
+    String album,
+    String source,
+  ) => 'v2|${motionName(title)}|${motionName(artist)}|'
+      '${motionName(motionAlbum(album))}|$source';
+
+  /// Read older completed caches without forcing users to re-download clips.
+  String _legacyOfflineKey(
     String title,
     String artist,
     String album,
@@ -55,23 +68,76 @@ class MovingCoverService {
   ) => 'v1|${motionName(title)}|${motionName(artist)}|'
       '${motionName(motionAlbum(album))}|${settings.order.join(',')}';
 
-  /// Persist the clip only after a player has successfully initialized it.
-  /// Streaming remains responsive; failed downloads never block playback.
+  static String _artworkSource(AnimatedArtwork artwork) {
+    final prefix = artwork.albumId.split(':').first;
+    return movingCoverSources.containsKey(prefix) ? prefix : 'apple';
+  }
+
+  /// Prepare both enabled artwork types while the native decoder opens.
   Future<void> cachePlayedClip({
     required String title,
     required String artist,
     String? album,
+    Duration? duration,
     required AnimatedArtwork artwork,
     required bool preferVertical,
+    String? alternateArtist,
+    bool cacheSelected = true,
   }) async {
-    if (await _ecoActive()) return;
-    final settings = await MovingCoverSettings.load();
-    await _offlineCache.remember(
-      _offlineKey(title, artist, album ?? '', settings),
-      artwork,
-      preferVertical: preferVertical,
-      canDownload: () async => !await _ecoActive(),
-    );
+    if (await _ecoActive() || await _offline()) return;
+    final prefs = await MovingCoverSettings.load();
+    final source = _artworkSource(artwork);
+    final alternateSources = prefs.order
+        .where((id) => (id == 'spotify') != (source == 'spotify'))
+        .toList();
+    var checkedRevision = EcoDataMode.revision.value;
+    var connected = true;
+    Future<bool> mayDownload() async {
+      if (EcoDataMode.revision.value != checkedRevision) {
+        checkedRevision = EcoDataMode.revision.value;
+        connected = !await _offline();
+      }
+      return connected && !await _ecoActive();
+    }
+
+    Future<void> save(AnimatedArtwork clip) async {
+      for (final candidate in {
+        artist,
+        if (alternateArtist != null) alternateArtist,
+      }) {
+        await _offlineCache.remember(
+          _offlineKey(title, candidate, album ?? '', _artworkSource(clip)),
+          clip,
+          preferVertical: preferVertical,
+          canDownload: mayDownload,
+        );
+      }
+    }
+
+    Future<void> prepareAlternate() async {
+      if (alternateSources.isEmpty) return;
+      final key = _offlineKey(title, artist, album ?? '', alternateSources.join(','));
+      if (!_warming.add(key)) return;
+      try {
+        final alternate = await lookup(
+          title: title,
+          artist: artist,
+          album: album,
+          duration: duration,
+          alternateArtist: alternateArtist,
+          settings: MovingCoverSettings(sources: alternateSources.toSet()),
+        );
+        final clip = alternate.artwork;
+        if (clip != null) await save(clip);
+      } finally {
+        _warming.remove(key);
+      }
+    }
+
+    await Future.wait([
+      if (cacheSelected) save(artwork),
+      prepareAlternate(),
+    ]);
   }
 
   Future<MotionArtLookup> lookup({
@@ -80,41 +146,120 @@ class MovingCoverService {
     String? album,
     Duration? duration,
     MovingCoverSettings? settings,
+    String? alternateArtist,
   }) async {
     final prefs = settings ?? await MovingCoverSettings.load();
     final cleanAlbum = motionAlbum(album);
-    final key =
-        '${motionName(title)}|${motionName(artist)}|${motionName(cleanAlbum)}|${prefs.order.join(',')}|${_apple.revision.value}|${SecureSpotifyTokenStore.sessionRevision.value}';
-    // Eco is specifically a *cache-only* motion art policy on cellular.
-    // Check before in-memory positive lookups: a URL isn't a downloaded clip.
-    // Also bypass any in-flight online provider lookups started before Eco.
-    if (await _ecoActive()) {
-      final offline = await _offlineCache.find(
-        _offlineKey(title, artist, cleanAlbum, prefs),
-      );
-      return MotionArtLookup(artwork: offline);
+    final cacheOnly = await _ecoActive() || await _offline();
+    Future<AnimatedArtwork?> offlineArtwork(List<String> sources) async {
+      for (final source in sources) {
+        for (final candidate in {
+          artist,
+          if (alternateArtist != null) alternateArtist,
+        }) {
+          final artwork = await _offlineCache.find(
+            _offlineKey(title, candidate, cleanAlbum, source),
+          );
+          if (artwork != null && _artworkSource(artwork) == source) {
+            return artwork;
+          }
+        }
+      }
+      // Legacy v1 files include the full source list in their hash.
+      for (final candidate in {
+        artist,
+        if (alternateArtist != null) alternateArtist,
+      }) {
+        final artwork = await _offlineCache.find(
+          _legacyOfflineKey(title, candidate, cleanAlbum, prefs),
+        );
+        if (artwork != null && sources.contains(_artworkSource(artwork))) {
+          return artwork;
+        }
+      }
+      if (cacheOnly) {
+        // v1 hashed the *whole* source list. Rebuild only plausible historic
+        // orders (five sources, Spotify-first optional) so existing downloads
+        // aren't stranded when a user adjusts Appearance before going offline.
+        // A successful match is reindexed under v2, making this a one-off cost.
+        final ids = movingCoverSources.keys.toList();
+        for (var mask = 1; mask < (1 << ids.length); mask++) {
+          final enabled = {
+            for (var i = 0; i < ids.length; i++)
+              if ((mask & (1 << i)) != 0) ids[i],
+          };
+          for (final spotifyFirst in [
+            false,
+            if (enabled.contains('spotify')) true,
+          ]) {
+            final oldSettings = MovingCoverSettings(
+              sources: enabled,
+              spotifyFirst: spotifyFirst,
+            );
+            if (oldSettings.order.join(',') == prefs.order.join(',')) continue;
+            for (final candidate in {
+              artist,
+              if (alternateArtist != null) alternateArtist,
+            }) {
+              final artwork = await _offlineCache.find(
+                _legacyOfflineKey(title, candidate, cleanAlbum, oldSettings),
+              );
+              if (artwork == null ||
+                  !sources.contains(_artworkSource(artwork))) continue;
+              await _offlineCache.indexExisting(
+                _offlineKey(
+                  title, candidate, cleanAlbum, _artworkSource(artwork),
+                ),
+                artwork,
+              );
+              return artwork;
+            }
+          }
+        }
+      }
+      return null;
     }
+
+    // Prefer the selected artwork type. In cache-only mode choose amongst
+    // saved sources only, so a fallback remains available in airplane mode.
+    if (cacheOnly) {
+      return MotionArtLookup(artwork: await offlineArtwork(prefs.order));
+    }
+    final covers = prefs.order.where((source) => source != 'spotify').toList();
+    final groups = prefs.spotifyFirst
+        ? [if (prefs.sources.contains('spotify')) ['spotify'], covers]
+        : [covers, if (prefs.sources.contains('spotify')) ['spotify']];
+    var transient = false;
+    for (final sources in groups.where((group) => group.isNotEmpty)) {
+      final local = await offlineArtwork(sources);
+      if (local != null) return MotionArtLookup(artwork: local);
+      final result = await _lookupOnline(title, artist, cleanAlbum, duration, sources);
+      if (result.artwork != null) return result;
+      transient |= result.transient;
+    }
+    return MotionArtLookup(transient: transient);
+  }
+
+  Future<MotionArtLookup> _lookupOnline(
+    String title,
+    String artist,
+    String cleanAlbum,
+    Duration? duration,
+    List<String> sources,
+  ) async {
+    final key =
+        '${motionName(title)}|${motionName(artist)}|${motionName(cleanAlbum)}|${sources.join(',')}|${_apple.revision.value}|${SecureSpotifyTokenStore.sessionRevision.value}';
     final cached = _cache[key];
     if (cached != null && cached.$1.isAfter(DateTime.now())) return cached.$2;
     final active = _jobs[key];
     if (active != null) return active;
 
-    // The completed local video is authoritative for offline playback. This
-    // check runs before any Apple/Tidal/Spotify/provider HTTP request.
-    final offline = await _offlineCache.find(
-      _offlineKey(title, artist, cleanAlbum, prefs),
-    );
-    if (offline != null) {
-      final result = MotionArtLookup(artwork: offline);
-      _cache[key] = (DateTime.now().add(const Duration(minutes: 30)), result);
-      return result;
-    }
     final job = _resolve(
       title: motionTitle(title),
       artist: artist,
       album: cleanAlbum,
       duration: duration,
-      settings: prefs,
+      sources: sources,
     );
     _jobs[key] = job;
     try {
@@ -143,10 +288,10 @@ class MovingCoverService {
     required String artist,
     required String album,
     Duration? duration,
-    required MovingCoverSettings settings,
+    required List<String> sources,
   }) async {
     var transient = false;
-    for (final source in settings.order) {
+    for (final source in sources) {
       try {
         AnimatedArtwork? artwork;
         if (source == 'apple') {
@@ -459,8 +604,12 @@ class MovingCoverService {
     if (url == null || !Uri.parse(url).path.toLowerCase().endsWith('.m3u8'))
       return art;
     try {
-      final text = (await _get(url)).body;
-      final lines = text.split('\n');
+      final response = await _get(url);
+      final base = switch (response) {
+        http.BaseResponseWithUrl(:final url) => url,
+        _ => Uri.parse(url),
+      };
+      final lines = response.body.split('\n');
       final variants = <(int, String)>[];
       for (var i = 0; i < lines.length - 1; i++) {
         if (!lines[i].startsWith('#EXT-X-STREAM-INF:') ||
@@ -475,7 +624,7 @@ class MovingCoverService {
         if (res != null && next != null)
           variants.add((
             int.parse(res[1]!) * int.parse(res[2]!),
-            Uri.parse(url).resolve(next).toString(),
+            base.resolve(next).toString(),
           ));
       }
       variants.sort((a, b) => a.$1.compareTo(b.$1));
@@ -489,7 +638,11 @@ class MovingCoverService {
           name: art.name,
           artist: art.artist,
           albumId: art.albumId,
+          staticUrl: art.staticUrl,
           animatedUrl: choice.$2,
+          animatedVerticalUrl: art.animatedVerticalUrl,
+          videoUrl: art.videoUrl,
+          videoUrlVertical: art.videoUrlVertical,
         );
     } catch (_) {
       /* Let the video player choose if this was already a media playlist. */
