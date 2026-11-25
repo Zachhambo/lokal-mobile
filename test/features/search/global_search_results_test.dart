@@ -58,6 +58,7 @@ const b = Song(
   id: '2',
   title: 'Second',
   artist: 'Gamma',
+  albumArtist: 'Various Artists',
   album: 'Shared title',
   duration: Duration(minutes: 3),
   fileType: 'FLAC',
@@ -113,6 +114,28 @@ void main() {
     expect(
       (await c.read(globalSearchResultsProvider('2024').future)).yearMatches,
       [a],
+    );
+    // Issue #618: Songs matches artist/album like Desktop, any word order.
+    expect(
+      (await c.read(globalSearchResultsProvider('gamma').future)).songs,
+      [b],
+    );
+    expect(
+      (await c.read(globalSearchResultsProvider('first shared').future)).songs,
+      [a],
+    );
+    expect(
+      (await c.read(globalSearchResultsProvider('Second').future)).songs,
+      [b],
+    );
+    // Keep the raw Various Artists tag searchable even though album grouping
+    // resolves that tag to the track artist.
+    expect(
+      (await c.read(globalSearchResultsProvider('various').future))
+          .albums
+          .single
+          .songs,
+      [b],
     );
     final provider = globalSearchResultsProvider('Mix');
     final sub = c.listen(provider, (_, _) {});

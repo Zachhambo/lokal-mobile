@@ -184,6 +184,7 @@ class StorageVolumeInfo {
   final bool isPrimary;
   final String state;
   final bool allFilesAccess;
+  final bool hasMediaAudioPermission;
 
   const StorageVolumeInfo({
     this.fsPath,
@@ -192,18 +193,22 @@ class StorageVolumeInfo {
     this.isPrimary = false,
     this.state = 'unknown',
     this.allFilesAccess = false,
+    this.hasMediaAudioPermission = false,
   });
 
   bool get isMounted => state == 'mounted';
 
   factory StorageVolumeInfo.fromMap(Map<String, dynamic> map) {
+    final allFiles = map['allFilesAccess'] as bool? ?? false;
     return StorageVolumeInfo(
       fsPath: map['fsPath'] as String?,
       mediaStoreVolume: map['mediaStoreVolume'] as String?,
       isRemovable: map['isRemovable'] as bool? ?? false,
       isPrimary: map['isPrimary'] as bool? ?? false,
       state: map['state'] as String? ?? 'unknown',
-      allFilesAccess: map['allFilesAccess'] as bool? ?? false,
+      allFilesAccess: allFiles,
+      hasMediaAudioPermission:
+          map['hasMediaAudioPermission'] as bool? ?? allFiles,
     );
   }
 }
@@ -263,29 +268,76 @@ class MusicFolderService {
   static const _prefKey = 'music_folders';
 
   final PermissionService _permissionService;
+  final FolderRepository Function() _foldersRepo;
   final FileFingerprintCache _fingerprintCache = FileFingerprintCache();
 
-  MusicFolderService({PermissionService? permissionService})
-    : _permissionService = permissionService ?? PermissionService();
+  MusicFolderService({
+    PermissionService? permissionService,
+    FolderRepository? folderRepository,
+  }) : _permissionService = permissionService ?? PermissionService(),
+       _foldersRepo = folderRepository != null
+           ? (() => folderRepository)
+           : FolderRepository.new;
 
   /// Add a new music folder using the system folder picker.
-  /// Returns the added folder, or null if cancelled.
-  /// Throws [FolderAlreadyExistsException] if the folder is already added.
+  /// Returns the added (or re-selected existing) folder, or null if cancelled.
+  /// Throws [FolderAlreadyExistsException] if a different overlapping folder is chosen.
   Future<MusicFolder?> addFolder() async {
     // Open folder picker
     final uri = await _permissionService.openFolderPicker();
     if (uri == null) return null;
 
+    final normalizedPicked = normalizeFolderIdentifier(uri);
+
     // Check if folder already exists
     final existingFolders = await getSavedFolders();
     for (final folder in existingFolders) {
-      if (folder.uri == uri) {
-        // iOS imports copies into one app-owned library root. Importing more
-        // files into it should rescan that root, preserving library identity.
-        if (Platform.isIOS) return folder;
-        throw FolderAlreadyExistsException(
-          'This folder has already been added',
+      final isSameFolder =
+          folder.uri == uri ||
+          normalizeFolderIdentifier(folder.uri) == normalizedPicked;
+      if (isSameFolder) {
+        if (!Platform.isIOS) {
+          // Refresh the persistable SAF grant so a previously added folder
+          // (e.g. after clearing the library) can be rescanned cleanly.
+          final success = await _permissionService.takePersistablePermission(
+            uri,
+          );
+          if (!success) {
+            throw StorageException('Failed to persist folder access');
+          }
+        }
+        final storageInfo = await resolveStorageInfo(uri);
+        final hasResolvedInfo = storageInfo.state != 'unknown';
+        final refreshed = MusicFolder(
+          uri: uri,
+          displayName: folder.displayName,
+          dateAdded: folder.dateAdded,
+          isRemovable: hasResolvedInfo
+              ? storageInfo.isRemovable
+              : folder.isRemovable,
+          mediaStoreVolume: hasResolvedInfo
+              ? storageInfo.mediaStoreVolume
+              : folder.mediaStoreVolume,
+          volumeState: hasResolvedInfo
+              ? storageInfo.state
+              : folder.volumeState,
         );
+        final existingEntity =
+            await _foldersRepo().getFolderByUri(folder.uri) ??
+            (folder.uri != uri
+                ? await _foldersRepo().getFolderByUri(uri)
+                : null);
+        if (folder.uri != uri) {
+          await _fingerprintCache.removeFolder(folder.uri);
+          await _removeFolderFromPrefs(folder.uri);
+          await _removeFolderFromDatabase(folder.uri);
+        }
+        await _saveFolderToPrefs(refreshed);
+        await _upsertFolderEntityPreservingSettings(
+          refreshed,
+          existing: existingEntity,
+        );
+        return refreshed;
       }
       if (foldersOverlap(folder.uri, uri)) {
         throw FolderAlreadyExistsException(
@@ -321,6 +373,25 @@ class MusicFolderService {
     await _saveFolderToDatabase(folder);
 
     return folder;
+  }
+
+  Future<void> _upsertFolderEntityPreservingSettings(
+    MusicFolder folder, {
+    FolderEntity? existing,
+  }) async {
+    final repository = _foldersRepo();
+    final entity = FolderEntity()
+      ..uri = folder.uri
+      ..displayName = folder.displayName
+      ..dateAdded = folder.dateAdded
+      ..lastScanned = existing?.lastScanned
+      ..songCount = existing?.songCount ?? 0
+      ..useDeepScan = existing?.useDeepScan
+      ..isRemovable = folder.isRemovable ?? existing?.isRemovable
+      ..mediaStoreVolume =
+          folder.mediaStoreVolume ?? existing?.mediaStoreVolume
+      ..volumeState = folder.volumeState ?? existing?.volumeState;
+    await repository.upsertFolder(entity);
   }
 
   /// Adds a folder the app itself writes to (Lokal's Downloads folder), by
@@ -378,7 +449,7 @@ class MusicFolderService {
     // Overlay live volume state from the DB; prefs only captures add-time
     // state, while the scanner updates isRemovable/volumeState in the entity.
     final entities = {
-      for (final e in await FolderRepository().getAllFolders()) e.uri: e,
+      for (final e in await _foldersRepo().getAllFolders()) e.uri: e,
     };
 
     final folders = <MusicFolder>[];
@@ -622,11 +693,13 @@ class MusicFolderService {
     try {
       final allFiles = await hasAllFilesAccess();
       if (!uri.startsWith('content://')) {
+        final mediaAudio = allFiles || await hasMediaAudioPermission();
         return StorageVolumeInfo(
           fsPath: uri,
           isPrimary: true,
           state: 'mounted',
           allFilesAccess: allFiles,
+          hasMediaAudioPermission: mediaAudio,
         );
       }
 
@@ -635,7 +708,10 @@ class MusicFolderService {
         {'uri': uri},
       );
       if (result == null) {
-        return StorageVolumeInfo(allFilesAccess: allFiles);
+        return StorageVolumeInfo(
+          allFilesAccess: allFiles,
+          hasMediaAudioPermission: allFiles || await hasMediaAudioPermission(),
+        );
       }
       return StorageVolumeInfo.fromMap(result.cast<String, dynamic>());
     } catch (e) {
@@ -648,6 +724,17 @@ class MusicFolderService {
   Future<bool> hasAllFilesAccess() async {
     try {
       return await _channel.invokeMethod<bool>('hasAllFilesAccess') ?? false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Whether the app holds broad audio read access (`READ_MEDIA_AUDIO` on
+  /// Android 13+, `READ_EXTERNAL_STORAGE` on Android 12-, or All Files Access).
+  Future<bool> hasMediaAudioPermission() async {
+    try {
+      return await _channel.invokeMethod<bool>('hasMediaAudioPermission') ??
+          false;
     } catch (e) {
       return false;
     }
@@ -777,7 +864,7 @@ class MusicFolderService {
       jsonDecode(json) as Map<String, dynamic>;
 
   Future<void> _saveFolderToDatabase(MusicFolder folder) async {
-    final repository = FolderRepository();
+    final repository = _foldersRepo();
     final entity = FolderEntity()
       ..uri = folder.uri
       ..displayName = folder.displayName
@@ -790,7 +877,7 @@ class MusicFolderService {
   }
 
   Future<void> _removeFolderFromDatabase(String uri) async {
-    final repository = FolderRepository();
+    final repository = _foldersRepo();
     await repository.deleteFolder(uri);
   }
 
