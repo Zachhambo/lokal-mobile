@@ -1322,10 +1322,12 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     Future<void> process() async {
       await runIncomingPhoneCommand(
         isCurrent: isCurrent,
-        handle: () => _handlePhoneCommand(
+        handle: () async {
+          commandResult = await _handlePhoneCommand(
           body,
           connectionGeneration: connectionGeneration,
-        ),
+          );
+        },
         acknowledgeSuccess: () async {
           if (body['action'] == 'copyTracksToPhone') {
             final message = state.transferMessage;
@@ -1459,7 +1461,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     });
   }
 
-  Future<void> _handlePhoneCommand(
+  Future<Object?> _handlePhoneCommand(
     Map<String, dynamic> body, {
     required int connectionGeneration,
   }) async {

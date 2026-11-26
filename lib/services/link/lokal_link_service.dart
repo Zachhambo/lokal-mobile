@@ -72,6 +72,8 @@ class LokalLinkService {
   bool get supportsTrackLifecycle =>
       _peerCapabilities == null ||
       _peerCapabilities!.contains('track_lifecycle');
+  bool get supportsMobileCatalog =>
+      _peerCapabilities?.contains('mobile_catalog') ?? false;
 
   Future<String> deviceId() async {
     final prefs = await SharedPreferences.getInstance();
@@ -426,7 +428,7 @@ class LokalLinkService {
       cancelOnError: true,
     );
     send('hello', {
-      'capabilities': const ['track_lifecycle'],
+      'capabilities': const ['track_lifecycle', 'mobile_catalog'],
       if (name != null) 'deviceName': name,
     });
     _connections.add(true);

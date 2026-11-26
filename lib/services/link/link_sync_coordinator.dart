@@ -4,6 +4,7 @@ import '../../models/song.dart';
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:isar_community/isar.dart';
@@ -459,6 +460,9 @@ class LinkSyncCoordinator {
       // Do not make a successful full sync wait for optional image uploads.
       unawaited(source.uploadRecentHistoryArtwork(credentials, maxCovers: 8));
     }
+    // Publish a bounded metadata snapshot of songs physically present on
+    // this phone. Desktop stores metadata only; audio bytes remain on-device.
+    if (!_background) await _publishMobileCatalog();
     _requireReady();
     _report(LinkSyncPhase.finalizing);
     if (!_background) {
@@ -466,6 +470,67 @@ class LinkSyncCoordinator {
       onProfileChanged?.call();
     }
     if (changed || !_background) MilestoneService.changes.add(null);
+  }
+
+
+  Future<void> _publishMobileCatalog() async {
+    _requireReady();
+    if (!socket.supportsMobileCatalog) return;
+    final songs = await SongRepository().getAllSongs();
+    final local = <Song>[];
+    // Bound filesystem metadata checks; do not serialize thousands of stats
+    // on the UI isolate during a large-library sync.
+    const existenceBatchSize = 32;
+    for (var offset = 0; offset < songs.length; offset += existenceBatchSize) {
+      _requireReady();
+      final batch = songs.skip(offset).take(existenceBatchSize).toList();
+      final available = await Future.wait(batch.map((song) async {
+        final path = song.filePath;
+        if (path == null || path.isEmpty || song.isNetworkSource || song.isExternal) {
+          return false;
+        }
+        try {
+          return await File(path).exists();
+        } on FileSystemException {
+          return false;
+        }
+      }));
+      for (var index = 0; index < batch.length; index++) {
+        if (available[index]) local.add(batch[index]);
+      }
+    }
+    const pageSize = 250;
+    final totalPages = (local.length / pageSize).ceil();
+    final complete = totalPages <= 200;
+    final pages = totalPages.clamp(1, 200).toInt();
+    final snapshot = linkUuid().replaceAll('-', '');
+    for (var page = 0; page < pages; page++) {
+      _requireReady();
+      final start = page * pageSize;
+      final end = (start + pageSize).clamp(0, local.length).toInt();
+      final items = [
+        for (final song in local.sublist(start, end))
+          {
+            'title': song.title,
+            'artist': song.artist,
+            'album': song.album,
+            'album_artist': song.albumArtist,
+            'track_num': song.trackNumber,
+            'disc_num': song.discNumber,
+            'year': song.year,
+            'genre': song.genre,
+            'duration': song.duration.inSeconds,
+            if (song.albumArt != null && Uri.tryParse(song.albumArt!)?.scheme == 'https' && !RegExp(r'[?&](?:token|signature|expires|auth)=', caseSensitive: false).hasMatch(song.albumArt!)) 'artwork_url': song.albumArt,
+          },
+      ];
+      await socket.request('catalog.push', {
+        'snapshot_id': snapshot,
+        'page': page,
+        'pages': pages,
+        'complete': complete,
+        'items': items,
+      });
+    }
   }
 
   /// Repair history which was received before its PC songs were in the
