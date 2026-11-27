@@ -38,6 +38,7 @@ class _LokalDesktopLinkScreenState
   List<LokalPairedDesktop> _pairedDesktops = [];
   bool _busy = false,
       _discovering = false,
+      _addingAnother = false,
       _theme = false,
       _sendDownloads = false;
   String? _error;
@@ -147,11 +148,11 @@ class _LokalDesktopLinkScreenState
         title: lokalText('Copy missing songs both ways?'),
         message: nativePlan != null
             ? lokalText(
-                '{count} song files will be prepared and queued. Keep Lokal open until preparation finishes, and keep the desktop awake on Wi-Fi. Originals stay on their source device. Follow progress and recovery in File transfers.',
+                '{count} files will be queued. Keep Lokal open and the desktop awake while transfers are prepared. Originals stay on their source device.',
                 args: {'count': nativePlan.total},
               )
             : lokalText(
-                '{send} songs to your PC, {receive} new songs to this phone, and {recover} existing private copies to your selected music folder under Lokal Desktop. Recovery uses files already on your phone; no re-download. Existing files are kept. Keep both apps open on Wi-Fi; check again to retry unfinished copies.',
+                '{send} files to your PC, {receive} files to this phone and {recover} existing copies to your music folder. Existing files are kept; nothing is deleted. Keep both devices awake and connected to Wi-Fi.',
                 args: {
                   'send': plan.toDesktop.length,
                   'receive': plan.toPhone.length,
@@ -289,7 +290,7 @@ class _LokalDesktopLinkScreenState
               Text(title, style: TextStyle(color: t.muted)),
             Text(
               lokalText(
-                'Saves original song files under Lokal Desktop in your selected music folder. Existing private copies can be recovered here too. Nothing is deleted or replaced. Check again to retry unfinished files.',
+                'Copies missing audio files in either direction. Existing files are never replaced or deleted. Choose where PC files are saved below.',
               ),
               style: TextStyle(color: t.muted),
             ),
@@ -297,7 +298,7 @@ class _LokalDesktopLinkScreenState
               const SizedBox(height: 8),
               Text(
                 lokalText(
-                  'Keep Lokal open and your iPhone unlocked, with your desktop awake, while copying over Wi-Fi. If copying stops, check again to retry unfinished files.',
+                  'On iPhone, keep Lokal open and the phone unlocked until transfers finish.',
                 ),
                 style: TextStyle(color: t.muted),
               ),
@@ -464,7 +465,7 @@ class _LokalDesktopLinkScreenState
             const SizedBox(height: 8),
             Text(
               lokalText(
-                'Listening history, minutes and play counts sync automatically in small batches while your desktop is linked. Full desktop-library, metadata, likes and playlist sync is manual: tap Sync now. No full library scan runs on startup or reconnection. Optional phone-download transfers stay queued until Sync now.',
+                'Listening history syncs automatically. Tap Sync now to update songs, likes, playlists and metadata. This does not copy audio files; use Copy missing song files for that.',
               ),
               style: TextStyle(color: t.muted),
             ),
@@ -473,7 +474,7 @@ class _LokalDesktopLinkScreenState
               const SizedBox(height: 8),
               Text(
                 lokalText(
-                  'Keep both devices connected. Completed work is saved; reconnect or retry to continue.',
+                  'Reconnect and tap Sync now to resume. Completed work is kept.',
                 ),
                 style: TextStyle(color: t.muted),
               ),
@@ -495,42 +496,52 @@ class _LokalDesktopLinkScreenState
     );
   }
 
-  Future<void> _pair({LokalPairingLink? qr}) => _run(() async {
-    final address = _address.text.trim();
-    final origin =
-        qr?.origin.toString() ??
-        (address.contains('://') ? address : 'http://$address');
-    final expected = await ref.read(lokalRemoteCredentialsStoreProvider).read();
-    if (!mounted) return;
-    final mutation = () => ref
-        .read(lokalRemoteControllerProvider.notifier)
-        .pairDesktop(
-          origin: origin,
-          code: qr?.code ?? _code.text,
-          expectedDesktopId: qr?.desktopId,
-          syncTheme: _theme,
-        );
-    final isAdditionalDesktop = expected != null &&
-        qr?.desktopId != null &&
-        qr!.desktopId != expected.desktopId;
-    if (isAdditionalDesktop) {
-      // Pause/drain iOS transfer work, but retain the existing desktop's
-      // native pairing scope and queued jobs.
-      await IosTransferRoot.withMutationBarrier(context, mutation);
-    } else {
-      await IosTransferRoot.withPairingRetirement(
-        context,
-        expected: expected,
-        mutation: mutation,
-      );
-    }
-    _code.clear();
-    await _saveOption('send_downloads', _sendDownloads);
-    final paired = await ref.read(lokalRemoteControllerProvider.notifier)
-        .pairedDesktops();
-    if (mounted) setState(() => _pairedDesktops = paired);
-  });
-  Future<void> _scan() async {
+  Future<void> _pair({LokalPairingLink? qr, bool additional = false}) =>
+      _run(() async {
+        final address = _address.text.trim();
+        final origin =
+            qr?.origin.toString() ??
+            (address.contains('://') ? address : 'http://$address');
+        final expected = await ref
+            .read(lokalRemoteCredentialsStoreProvider)
+            .read();
+        if (!mounted) return;
+        final mutation = () => ref
+            .read(lokalRemoteControllerProvider.notifier)
+            .pairDesktop(
+              origin: origin,
+              code: qr?.code ?? _code.text,
+              expectedDesktopId: qr?.desktopId,
+              syncTheme: _theme,
+            );
+        final isAdditionalDesktop =
+            expected != null &&
+            (additional ||
+                (qr?.desktopId != null && qr!.desktopId != expected.desktopId));
+        if (isAdditionalDesktop) {
+          // Pause/drain iOS transfer work, but retain the existing desktop's
+          // native pairing scope and queued jobs.
+          await IosTransferRoot.withMutationBarrier(context, mutation);
+        } else {
+          await IosTransferRoot.withPairingRetirement(
+            context,
+            expected: expected,
+            mutation: mutation,
+          );
+        }
+        _code.clear();
+        await _saveOption('send_downloads', _sendDownloads);
+        final paired = await ref
+            .read(lokalRemoteControllerProvider.notifier)
+            .pairedDesktops();
+        if (mounted) {
+          setState(() {
+            _pairedDesktops = paired;
+            _addingAnother = false;
+          });
+        }
+      });
+  Future<void> _scan({bool additional = false}) async {
     final value = await Navigator.of(
       context,
     ).push<String>(MaterialPageRoute(builder: (_) => const _PairingScanner()));
@@ -538,7 +549,7 @@ class _LokalDesktopLinkScreenState
     try {
       final qr = LokalPairingLink.parse(value);
       _address.text = qr.origin.toString();
-      await _pair(qr: qr);
+      await _pair(qr: qr, additional: additional);
     } on FormatException {
       if (mounted) setState(() => _error = l10n.linkInvalidQr);
     }
@@ -555,8 +566,89 @@ class _LokalDesktopLinkScreenState
     );
   }
 
+  Widget _buildPairingCard({required bool additional}) => LokalSettingsBlock(
+    child: LokalSettingsCard(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          FilledButton.icon(
+            onPressed: _busy ? null : () => _scan(additional: additional),
+            icon: const Icon(Icons.qr_code_scanner_rounded),
+            label: Text(l10n.linkScanQr),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: _discovering ? null : _discover,
+            icon: const Icon(Icons.wifi_find_rounded),
+            label: Text(
+              _discovering ? l10n.linkSearching : l10n.linkSearchDesktops,
+            ),
+          ),
+          for (final desktop in _desktops)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.desktop_windows_rounded),
+              title: Text(desktop.name),
+              subtitle: Text(desktop.origin.toString()),
+              onTap: () {
+                _address.text = desktop.origin.toString();
+              },
+            ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _address,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            decoration: InputDecoration(
+              labelText: l10n.linkDesktopAddress,
+              hintText: '192.168.1.20:3421',
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _code,
+            keyboardType: TextInputType.number,
+            autofillHints: const [AutofillHints.oneTimeCode],
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(6),
+            ],
+            decoration: InputDecoration(labelText: l10n.linkPairingCode),
+          ),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            title: Text(l10n.linkMatchTheme),
+            value: _theme,
+            onChanged: (value) => setState(() => _theme = value),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: _busy ? null : () => _pair(additional: additional),
+            child: Text(_busy ? l10n.linkConnecting : l10n.linkPair),
+          ),
+          if (additional) ...[
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: _busy
+                  ? null
+                  : () => setState(() => _addingAnother = false),
+              child: Text(l10n.cancel),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
+    ref.listen(lokalRemoteControllerProvider, (previous, next) {
+      if (previous?.config?.identity != next.config?.identity ||
+          previous?.desktopName != next.desktopName) {
+        unawaited(_loadOptions());
+      }
+    });
     final link = ref.watch(lokalRemoteControllerProvider),
         controller = ref.read(lokalRemoteControllerProvider.notifier),
         t = context.lokal;
@@ -600,15 +692,28 @@ class _LokalDesktopLinkScreenState
                   ),
                   for (final desktop in _pairedDesktops)
                     Builder(builder: (context) {
-                      final active = link.config?.origin ==
-                          desktop.credentials.origin;
+                      final active = link.config?.identity == desktop.id;
+                      final sharedAuthority = _pairedDesktops
+                              .where(
+                                (item) =>
+                                    item.credentials.origin.authority ==
+                                    desktop.credentials.origin.authority,
+                              )
+                              .length >
+                          1;
+                      final shortId = desktop.id.length > 8
+                          ? desktop.id.substring(0, 8)
+                          : desktop.id;
+                      final subtitle = sharedAuthority
+                          ? '${desktop.credentials.origin.authority} · $shortId'
+                          : desktop.credentials.origin.authority;
                       return ListTile(
                         leading: Icon(
                           Icons.desktop_windows_rounded,
                           color: active ? t.accent : t.muted,
                         ),
                         title: Text(desktop.name),
-                        subtitle: Text(desktop.credentials.origin.authority),
+                        subtitle: Text(subtitle),
                         trailing: active
                             ? Text(lokalText('Active'))
                             : const Icon(Icons.swap_horiz_rounded),
@@ -725,18 +830,35 @@ class _LokalDesktopLinkScreenState
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: OutlinedButton.icon(
-                      onPressed: _busy ? null : _scan,
-                      icon: const Icon(Icons.add_link_rounded),
-                      label: Text(lokalText('Pair another desktop')),
-                    ),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _busy ? null : () => _scan(additional: true),
+                        icon: const Icon(Icons.add_link_rounded),
+                        label: Text(lokalText('Pair another desktop')),
+                      ),
+                      TextButton(
+                        onPressed: _busy
+                            ? null
+                            : () => setState(
+                                () => _addingAnother = !_addingAnother,
+                              ),
+                        child: Text(
+                          _addingAnother
+                              ? l10n.cancel
+                              : lokalText('Enter code manually'),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
           ),
+          if (_addingAnother) _buildPairingCard(additional: true),
           if (link.mergeApproved ||
               link.syncProgress.phase != LinkSyncPhase.idle)
             _mergeStatus(link),
@@ -805,75 +927,7 @@ class _LokalDesktopLinkScreenState
               ),
             ),
         ] else ...[
-          LokalSettingsBlock(
-            child: LokalSettingsCard(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  FilledButton.icon(
-                    onPressed: _busy ? null : _scan,
-                    icon: const Icon(Icons.qr_code_scanner_rounded),
-                    label: Text(l10n.linkScanQr),
-                  ),
-                  const SizedBox(height: 10),
-                  OutlinedButton.icon(
-                    onPressed: _discovering ? null : _discover,
-                    icon: const Icon(Icons.wifi_find_rounded),
-                    label: Text(
-                      _discovering
-                          ? l10n.linkSearching
-                          : l10n.linkSearchDesktops,
-                    ),
-                  ),
-                  for (final desktop in _desktops)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.desktop_windows_rounded),
-                      title: Text(desktop.name),
-                      subtitle: Text(desktop.origin.toString()),
-                      onTap: () {
-                        _address.text = desktop.origin.toString();
-                      },
-                    ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _address,
-                    keyboardType: TextInputType.url,
-                    autocorrect: false,
-                    decoration: InputDecoration(
-                      labelText: l10n.linkDesktopAddress,
-                      hintText: '192.168.1.20:3421',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _code,
-                    keyboardType: TextInputType.number,
-                    autofillHints: const [AutofillHints.oneTimeCode],
-                    inputFormatters: [
-                      FilteringTextInputFormatter.digitsOnly,
-                      LengthLimitingTextInputFormatter(6),
-                    ],
-                    decoration: InputDecoration(
-                      labelText: l10n.linkPairingCode,
-                    ),
-                  ),
-                  SwitchListTile.adaptive(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(l10n.linkMatchTheme),
-                    value: _theme,
-                    onChanged: (value) => setState(() => _theme = value),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton(
-                    onPressed: _busy ? null : () => _pair(),
-                    child: Text(_busy ? l10n.linkConnecting : l10n.linkPair),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          _buildPairingCard(additional: false),
         ],
         LokalSettingsBlock(
           child: TextButton(

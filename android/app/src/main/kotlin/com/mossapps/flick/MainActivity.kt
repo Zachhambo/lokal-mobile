@@ -1989,9 +1989,20 @@ class MainActivity: FlutterActivity() {
 
             if (fileUri.scheme == "content") {
                 return try {
-                    DocumentsContract.deleteDocument(contentResolver, fileUri)
+                    // SAF document URIs must go through DocumentsContract.
+                    // MediaStore item URIs are content:// too, but are not
+                    // document URIs; delete them through ContentResolver.
+                    val deleted = if (DocumentsContract.isDocumentUri(this, fileUri)) {
+                        DocumentsContract.deleteDocument(contentResolver, fileUri)
+                    } else {
+                        contentResolver.delete(fileUri, null, null) > 0
+                    }
+                    if (!deleted) {
+                        Log.w("MainActivity", "Content URI deletion returned no rows: $filePath")
+                    }
+                    deleted
                 } catch (e: Exception) {
-                    Log.w("MainActivity", "content URI deletion failed: ${e.message}")
+                    Log.w("MainActivity", "content URI deletion failed: ${e.message}", e)
                     false
                 }
             }
@@ -2052,13 +2063,11 @@ class MainActivity: FlutterActivity() {
                 Log.w("MainActivity", "File.delete failed: ${fileEx.message}")
             }
 
-            // Last resort: dropping the MediaStore row removes the track from
-            // the library even if the file itself could not be deleted.
-            if (removeFromMediaStore(filePath)) {
-                Log.w("MainActivity", "File not removed, dropped MediaStore entry only: $filePath")
-                return true
-            }
-
+            // A MediaStore-only deletion is NOT a successful file deletion.
+            // Removing the index entry while leaving bytes on disk causes the
+            // next library scan to import the same track again. Keep the
+            // operation failed so the caller retains the library row and can
+            // report/retry the physical deletion.
             false
         } catch (e: Exception) {
             Log.w("MainActivity", "deleteDocumentViaSaf failed: ${e.message}", e)
@@ -2094,15 +2103,26 @@ class MainActivity: FlutterActivity() {
         }
         val input = File(source)
         require(input.isFile && input.length() > 0)
-        require(folder.findFile(name) == null)
-        val part = folder.createFile("application/octet-stream", "$name.part") ?: error("Cannot create file")
+        val dotIndex = name.lastIndexOf('.')
+        val stem = if (dotIndex > 0) name.substring(0, dotIndex) else name
+        val ext = if (dotIndex > 0) name.substring(dotIndex) else ""
+        var actualName: String? = null
+        for (i in 1..1000) {
+            val candidate = if (i == 1) "$stem$ext" else "$stem ($i)$ext"
+            if (folder.findFile(candidate) == null && folder.findFile("$candidate.part") == null) {
+                actualName = candidate
+                break
+            }
+        }
+        val chosenName = actualName ?: error("Too many duplicate files in folder")
+        val part = folder.createFile("application/octet-stream", "$chosenName.part") ?: error("Cannot create file")
         try {
             val bytes = contentResolver.openOutputStream(part.uri, "wt")?.use { output ->
                 input.inputStream().use { stream -> stream.copyTo(output, 1024 * 1024).also { output.flush() } }
             } ?: error("Cannot open destination")
             require(bytes == input.length() && part.length() == bytes)
-            require(part.renameTo(name))
-            val result = mutableMapOf("uri" to part.uri.toString())
+            require(part.renameTo(chosenName))
+            val result = mutableMapOf("uri" to part.uri.toString(), "name" to chosenName)
             if (part.uri.authority == "com.android.externalstorage.documents") {
                 val id = DocumentsContract.getDocumentId(part.uri).split(":", limit = 2)
                 val base = if (id[0].equals("primary", true)) Environment.getExternalStorageDirectory().absolutePath

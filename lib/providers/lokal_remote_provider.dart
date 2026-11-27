@@ -26,15 +26,20 @@ import '../services/link/link_file_copy.dart';
 import '../services/link/desktop_track_copy_command.dart';
 import '../services/link/phone_command_queue.dart';
 import '../services/link/desktop_catalogue_import.dart';
+import '../services/link/link_song_bindings.dart';
 import '../services/link/lokal_desktop_source.dart';
+import '../services/link/transfer_artifact_cleaner.dart';
+import '../features/discovery/recommendation_match.dart';
 import '../core/navigation/root_navigator.dart';
 import '../widgets/lokal/lokal_toast.dart';
 import 'favorites_provider.dart';
 import 'playlist_provider.dart';
+import 'songs_provider.dart';
 import '../core/theme/lokal_appearance.dart';
 
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar_community/isar.dart';
 import 'package:flutter/widgets.dart'
@@ -245,11 +250,13 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           )) {
         await ref.read(lokalRemoteCredentialsStoreProvider).write(credentials);
       }
+      final savedName = await _savedDesktopNameFor(credentials);
       if (_disposed || revision != _configurationRevision) return;
       _credentials = credentials;
       state = state.copyWith(
         config: LokalRemoteConfig.fromCredentials(credentials),
         status: LokalRemoteConnectionStatus.disconnected,
+        desktopName: savedName,
         clearError: true,
       );
       if (credentials.desktopId != null && credentials.remoteToken.isNotEmpty) {
@@ -301,6 +308,17 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     );
   }
 
+  Future<void> _cleanupForgottenDesktop(
+    LokalRemoteCredentials? forgotten,
+  ) async {
+    if (forgotten == null || !Database.isInitialized) return;
+    final cleared = await cleanupForgottenDesktopLibrary(forgotten);
+    if (cleared && !_disposed) {
+      ref.invalidate(songsProvider);
+      ref.invalidate(networkServersProvider);
+    }
+  }
+
   Future<void> forgetConfiguration({
     required LokalRemoteCredentials? expected,
   }) async {
@@ -309,6 +327,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     if (_disposed || revision != _configurationRevision) {
       throw StateError('Desktop pairing changed. Refresh and retry.');
     }
+    final activeBefore = _credentials;
     var vaultAvailable = true;
     LokalRemoteCredentials? fallback;
     if (expected != null) {
@@ -330,6 +349,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         }
         rethrow;
       }
+      await _cleanupForgottenDesktop(expected);
       if (_disposed || revision != _configurationRevision) return;
       disconnect();
       _generation++;
@@ -354,6 +374,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
       }
       rethrow;
     }
+    await _cleanupForgottenDesktop(expected ?? activeBefore);
     if (_disposed || revision != _configurationRevision) return;
     disconnect();
     _generation++;
@@ -522,13 +543,13 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     final revision = ++_configurationRevision;
     await _ensureRestored();
     if (_disposed || revision != _configurationRevision) return;
-    final credentials = await ref
-        .read(lokalLinkServiceProvider)
-        .pair(
-          origin: LokalRemoteService.normalizeOrigin(origin),
-          code: code,
-          expectedDesktopId: expectedDesktopId,
-        );
+    final linkService = ref.read(lokalLinkServiceProvider);
+    final credentials = await linkService.pair(
+      origin: LokalRemoteService.normalizeOrigin(origin),
+      code: code,
+      expectedDesktopId: expectedDesktopId,
+    );
+    final pairedName = linkService.lastPairedDesktopName;
     if (_disposed || revision != _configurationRevision) return;
     final vault = ref.read(lokalPairedDesktopsStoreProvider);
     String? previousDesktopId;
@@ -536,6 +557,12 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     try {
       previousDesktopId = await vault.activeId();
       await vault.add(credentials);
+      if (pairedName != null) {
+        await vault.updateMetadata(
+          LokalPairedDesktopsStore.identity(credentials),
+          name: pairedName,
+        );
+      }
     } on MissingPluginException {
       vaultAvailable = false;
       // Keep legacy pairing operational on test runners without secure storage.
@@ -556,10 +583,28 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     if (_disposed || revision != _configurationRevision) return;
     final saved = await ref.read(lokalRemoteCredentialsStoreProvider).read();
     if (_disposed || revision != _configurationRevision) return;
-    _credentials = saved;
+    final effective = saved ?? credentials;
+    if (vaultAvailable && saved != null && saved.pairingID != credentials.pairingID) {
+      try {
+        await vault.add(saved);
+        if (pairedName != null) {
+          await vault.updateMetadata(
+            LokalPairedDesktopsStore.identity(saved),
+            name: pairedName,
+          );
+        }
+      } on MissingPluginException {
+        // Ignore on legacy-only test runners.
+      }
+    }
+    if (_disposed || revision != _configurationRevision) return;
+    final resolvedName = pairedName ?? await _savedDesktopNameFor(effective);
+    if (_disposed || revision != _configurationRevision) return;
+    _credentials = effective;
     ref.invalidate(linkedDesktopProfileProvider);
     state = LokalRemoteControllerState(
-      config: LokalRemoteConfig.fromCredentials(credentials),
+      config: LokalRemoteConfig.fromCredentials(effective),
+      desktopName: resolvedName,
     );
     await connect();
   }
@@ -603,12 +648,23 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
       if (previousDesktopId != null) await vault.select(previousDesktopId);
       rethrow;
     }
+    final saved = await ref.read(lokalRemoteCredentialsStoreProvider).read();
+    final effective = saved ?? credentials;
+    if (saved != null && saved.pairingID != credentials.pairingID) {
+      try {
+        await vault.add(saved);
+      } on MissingPluginException {
+        // Ignore on legacy-only test runners.
+      }
+    }
+    final savedName = await _savedDesktopNameFor(effective);
     disconnect();
-    _credentials = credentials;
+    _credentials = effective;
     ref.invalidate(linkedDesktopProfileProvider);
     state = LokalRemoteControllerState(
       config: LokalRemoteConfig.fromCredentials(_credentials!),
       status: LokalRemoteConnectionStatus.disconnected,
+      desktopName: savedName,
     );
     await connect();
   }
@@ -947,6 +1003,9 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           ? error.httpStatusCode
           : null;
       if (error is LokalRemoteAuthException || statusCode == 401) {
+        if (await _trySwitchToBootedSiblingDesktop(credentials, generation)) {
+          return;
+        }
         _socketWanted = false;
         // The desktop may be temporarily locked or on another profile. Do
         // not abandon a durable pairing or require a new QR scan on return.
@@ -967,6 +1026,109 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     } finally {
       if (!_disposed && generation == _generation) _openingSocket = false;
     }
+  }
+
+  Future<String> _savedDesktopNameFor(LokalRemoteCredentials credentials) async {
+    try {
+      final targetId = LokalPairedDesktopsStore.identity(credentials);
+      final entries = await ref
+          .read(lokalPairedDesktopsStoreProvider)
+          .readAll(legacyActive: credentials);
+      for (final entry in entries) {
+        if (entry.id == targetId && entry.name.trim().isNotEmpty) {
+          return entry.name;
+        }
+      }
+    } on Object {
+      // Fall back to default label when secure storage is unavailable in tests.
+    }
+    return 'Lokal desktop';
+  }
+
+  /// On a dual-boot machine, Windows and Linux share the same LAN IP/port
+  /// (`origin`) while owning distinct `desktopId`s and bearer tokens. When the
+  /// active OS rejects the previous OS's token with 401, check whether another
+  /// saved pairing on this phone cryptographically owns the running instance
+  /// via `/api/remote/identity` (which never discloses bearer tokens).
+  Future<bool> _trySwitchToBootedSiblingDesktop(
+    LokalRemoteCredentials current,
+    int generation,
+  ) async {
+    if (_syncInFlight ||
+        _statsSyncInFlight ||
+        _linkSync?.busy == true ||
+        state.syncProgress.busy ||
+        state.fileCopyProgress.busy) {
+      return false;
+    }
+    final vault = ref.read(lokalPairedDesktopsStoreProvider);
+    List<LokalPairedDesktop> entries;
+    try {
+      entries = await vault.readAll(legacyActive: current);
+    } on Object {
+      return false;
+    }
+    final currentId = LokalPairedDesktopsStore.identity(current);
+    final siblings = entries
+        .where(
+          (entry) =>
+              entry.id != currentId &&
+              entry.credentials.desktopId != null &&
+              entry.credentials.remoteToken.isNotEmpty,
+        )
+        .toList()
+      ..sort((a, b) {
+        final aSameOrigin = a.credentials.origin == current.origin ? 0 : 1;
+        final bSameOrigin = b.credentials.origin == current.origin ? 0 : 1;
+        return aSameOrigin.compareTo(bSameOrigin);
+      });
+    if (siblings.isEmpty) return false;
+
+    final linkService = ref.read(lokalLinkServiceProvider);
+    for (final sibling in siblings) {
+      if (_disposed || generation != _generation) return true;
+      final verified = await linkService.verifyDesktopIdentity(
+        current.origin,
+        sibling.credentials,
+      );
+      if (_disposed || generation != _generation) return true;
+      if (!verified) continue;
+
+      var nextCredentials = sibling.credentials;
+      if (nextCredentials.origin != current.origin) {
+        nextCredentials = LokalRemoteCredentials(
+          origin: current.origin,
+          remoteToken: nextCredentials.remoteToken,
+          apiKey: nextCredentials.apiKey,
+          desktopId: nextCredentials.desktopId,
+          desktopUserId: nextCredentials.desktopUserId,
+          pairingID: nextCredentials.pairingID,
+        );
+      }
+      try {
+        await vault.add(nextCredentials);
+        await ref.read(lokalRemoteCredentialsStoreProvider).write(nextCredentials);
+        final saved = await ref.read(lokalRemoteCredentialsStoreProvider).read();
+        if (saved != null) nextCredentials = saved;
+      } on Object {
+        return false;
+      }
+      if (_disposed || generation != _generation) return true;
+      _openingSocket = false;
+      _generation++;
+      _credentials = nextCredentials;
+      ref.invalidate(linkedDesktopProfileProvider);
+      state = LokalRemoteControllerState(
+        config: LokalRemoteConfig.fromCredentials(nextCredentials),
+        status: LokalRemoteConnectionStatus.connecting,
+        desktopName: sibling.name.trim().isNotEmpty
+            ? sibling.name
+            : 'Lokal desktop',
+      );
+      unawaited(_connectSocket());
+      return true;
+    }
+    return false;
   }
 
   void _socketConnectionChanged(bool connected) {
@@ -995,12 +1157,32 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           disconnect();
           return;
         }
+        final formattedName =
+            LokalLinkService.formatDesktopDisplayName(
+              message.body['name'],
+              message.body['platform'],
+            ) ??
+            'Lokal desktop';
         state = state.copyWith(
-          desktopName: message.body['name'] as String? ?? 'Lokal desktop',
+          desktopName: formattedName,
           syncPreview: message.body['syncPreview'] is Map
               ? Map<String, dynamic>.from(message.body['syncPreview'] as Map)
               : null,
         );
+        final active = _credentials;
+        if (active != null) {
+          unawaited(() async {
+            try {
+              await ref.read(lokalPairedDesktopsStoreProvider).updateMetadata(
+                LokalPairedDesktopsStore.identity(active),
+                name: formattedName,
+                lastConnectedAt: DateTime.now(),
+              );
+            } on Object {
+              // Non-fatal on test runners without secure storage.
+            }
+          }());
+        }
         break;
       case 'state':
         _desktopState = Map<String, dynamic>.from(message.body);
@@ -1140,10 +1322,12 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     Future<void> process() async {
       await runIncomingPhoneCommand(
         isCurrent: isCurrent,
-        handle: () => _handlePhoneCommand(
-          body,
-          connectionGeneration: connectionGeneration,
-        ),
+        handle: () async {
+          await _handlePhoneCommand(
+            body,
+            connectionGeneration: connectionGeneration,
+          );
+        },
         acknowledgeSuccess: () async {
           if (body['action'] == 'copyTracksToPhone') {
             final message = state.transferMessage;
@@ -1392,17 +1576,24 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
       ),
       transferHasError: false,
     );
+    final lookedUpById = <String, Map<String, dynamic>>{};
     final result = await copyDesktopCatalogueTracks(
       requestedIds: ids,
-      loadCatalogue: () => source.lookupCatalogueTracks(credentials, ids),
-      isAlreadyPresent: (id) async {
-        final rows = await Database.songs
-            .filter()
-            .remoteServerIdEqualTo(server.id)
-            .remoteIdEqualTo(id)
-            .findAll();
-        return rows.any(isDownloadedDesktopOriginal);
+      loadCatalogue: () async {
+        final catalogue = await source.lookupCatalogueTracks(credentials, ids);
+        for (final track in catalogue) {
+          final trackId = track['id']?.toString();
+          if (trackId != null && trackId.isNotEmpty) {
+            lookedUpById[trackId] = track;
+          }
+        }
+        return catalogue;
       },
+      isAlreadyPresent: (id) => isDesktopTrackAlreadyPresentLocally(
+        serverId: server.id,
+        remoteId: id,
+        track: lookedUpById[id],
+      ),
       copyTrack: (track) => source.copyOriginalToPhone(server, track),
       shouldContinue: () =>
           _isDesktopCopyCurrent(connectionGeneration, lifecycleEpoch),
@@ -1801,4 +1992,200 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         : 'Could not reach Lokal on the local network.';
     state = state.copyWith(status: status, error: message);
   }
+}
+
+/// Checks whether a desktop catalogue track is already stored locally on the
+/// phone — via direct `(remoteServerId, remoteId)` row, [LinkSongBindings], or
+/// a canonical `(artist, title, duration <= 2s)` local recording match (binding
+/// the matched local song to `(serverId, remoteId)` so multi-PC pushes never
+/// re-download duplicates).
+@visibleForTesting
+Future<bool> isDesktopTrackAlreadyPresentLocally({
+  required int serverId,
+  required String remoteId,
+  Map<String, dynamic>? track,
+}) async {
+  if (!Database.isInitialized) return false;
+  await LinkSongBindings.instance.ensureLoaded();
+
+  // 1. Direct Isar (remoteServerId, remoteId) downloaded row.
+  final directRows = await Database.songs
+      .filter()
+      .remoteServerIdEqualTo(serverId)
+      .remoteIdEqualTo(remoteId)
+      .findAll();
+  for (final row in directRows) {
+    if (isDownloadedDesktopOriginal(row)) {
+      await LinkSongBindings.instance.bind(
+        row.id.toString(),
+        serverId: serverId,
+        remoteId: remoteId,
+        filePath: row.filePath,
+      );
+      return true;
+    }
+  }
+
+  // 2. Multi-PC LinkSongBindings check.
+  final boundSongIds = await LinkSongBindings.instance.findLocalSongIdsForServer(
+    serverId,
+    remoteId,
+  );
+  for (final idStr in boundSongIds) {
+    final numericId = int.tryParse(idStr);
+    if (numericId != null) {
+      final row = await Database.songs.get(numericId);
+      if (row != null && isDownloadedDesktopOriginal(row)) {
+        return true;
+      }
+    }
+    final binding = LinkSongBindings.instance.peek(idStr);
+    if (binding?.filePath != null && binding!.filePath!.isNotEmpty) {
+      final byPath = await Database.songs
+          .where()
+          .filePathEqualToAnyStartOffsetMs(binding.filePath!)
+          .findFirst();
+      if (byPath != null && isDownloadedDesktopOriginal(byPath)) {
+        return true;
+      }
+    }
+  }
+
+  // 3. Canonical (artist, title, duration within 2s) check across local files.
+  if (track == null) return false;
+  final rawTitle = track['title']?.toString() ?? '';
+  final rawArtist = track['artist']?.toString() ?? '';
+  final durationSec = (track['duration'] as num?)?.toDouble() ?? 0;
+  final targetClean = cleanTransferMetadata(title: rawTitle, artist: rawArtist);
+  var targetArtistKey = recommendationKey(leadArtist(targetClean.artist));
+  if (targetArtistKey.isEmpty) {
+    targetArtistKey = recommendationKey(targetClean.artist);
+  }
+  var targetTitleKey = titleKey(targetClean.title);
+  if (targetTitleKey.isEmpty) {
+    targetTitleKey = recommendationKey(targetClean.title);
+  }
+  if (targetTitleKey.isEmpty || targetArtistKey.isEmpty || durationSec <= 0) {
+    return false;
+  }
+
+  final allRows = await Database.songs.where().findAll();
+  for (final row in allRows) {
+    if (!isDownloadedDesktopOriginal(row) ||
+        row.filePath.startsWith('pending:')) {
+      continue;
+    }
+    final rowDurSec = (row.durationMs ?? 0) / 1000.0;
+    if (rowDurSec <= 0 || (rowDurSec - durationSec).abs() > 2.0) continue;
+
+    final rowClean = cleanTransferMetadata(
+      title: row.title,
+      artist: row.artist,
+    );
+    var rowArtistKey = recommendationKey(leadArtist(rowClean.artist));
+    if (rowArtistKey.isEmpty) {
+      rowArtistKey = recommendationKey(rowClean.artist);
+    }
+    var rowTitleKey = titleKey(rowClean.title);
+    if (rowTitleKey.isEmpty) {
+      rowTitleKey = recommendationKey(rowClean.title);
+    }
+    if (rowTitleKey == targetTitleKey && rowArtistKey == targetArtistKey) {
+      await LinkSongBindings.instance.bind(
+        row.id.toString(),
+        serverId: serverId,
+        remoteId: remoteId,
+        filePath: row.filePath,
+      );
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Cleans up a forgotten desktop's `NetworkServerEntity`, its
+/// `lokal://<serverId>/...` and `ghost://desktop/<serverId>/...` rows in Isar,
+/// clears stale `remoteServerId == serverId` on surviving local audio rows
+/// without touching local files, and removes `serverId` from
+/// [LinkSongBindings].
+@visibleForTesting
+Future<bool> cleanupForgottenDesktopLibrary(
+  LokalRemoteCredentials forgotten,
+) async {
+  if (!Database.isInitialized) return false;
+  final servers = <NetworkServerEntity>[];
+  if (forgotten.desktopId != null && forgotten.desktopId!.isNotEmpty) {
+    final username =
+        '${forgotten.desktopId}:${forgotten.desktopUserId ?? 'guest'}';
+    servers.addAll(
+      await Database.networkServers
+          .filter()
+          .protocolEqualTo('lokal')
+          .usernameEqualTo(username)
+          .findAll(),
+    );
+  } else {
+    servers.addAll(
+      await Database.networkServers
+          .filter()
+          .protocolEqualTo('lokal')
+          .baseUrlEqualTo(forgotten.origin.toString())
+          .findAll(),
+    );
+  }
+  if (servers.isEmpty) return false;
+
+  for (final server in servers) {
+    final serverId = server.id;
+    final streamPrefix = 'lokal://$serverId/';
+    final ghostPrefix = 'ghost://desktop/$serverId/';
+
+    final byServer = await Database.songs
+        .where()
+        .remoteServerIdEqualTo(serverId)
+        .findAll();
+    final byStreamPrefix = await Database.songs
+        .filter()
+        .filePathStartsWith(streamPrefix)
+        .findAll();
+    final byGhostPrefix = await Database.songs
+        .filter()
+        .filePathStartsWith(ghostPrefix)
+        .findAll();
+
+    final seenRows = <int, SongEntity>{
+      for (final row in byServer) row.id: row,
+      for (final row in byStreamPrefix) row.id: row,
+      for (final row in byGhostPrefix) row.id: row,
+    };
+
+    final idsToDelete = <int>[];
+    final localRowsToUnlink = <SongEntity>[];
+    for (final row in seenRows.values) {
+      final isRemoteOrGhost =
+          row.sourceType == 'lokal' ||
+          row.filePath.startsWith(streamPrefix) ||
+          row.filePath.startsWith(ghostPrefix);
+      if (isRemoteOrGhost) {
+        idsToDelete.add(row.id);
+      } else if (row.remoteServerId == serverId) {
+        row.remoteServerId = null;
+        row.remoteId = null;
+        localRowsToUnlink.add(row);
+      }
+    }
+
+    await Database.instance.writeTxn(() async {
+      if (idsToDelete.isNotEmpty) {
+        await Database.songs.deleteAll(idsToDelete);
+      }
+      if (localRowsToUnlink.isNotEmpty) {
+        await Database.songs.putAll(localRowsToUnlink);
+      }
+      await Database.networkServers.delete(serverId);
+    });
+
+    await LinkSongBindings.instance.removeServer(serverId);
+  }
+  return true;
 }
