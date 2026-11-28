@@ -348,7 +348,12 @@ List<LokalArtist> selectArtistFavorites(
               (filter == ArtistFavoritesFilter.favorites))
         artist,
   ];
-  selected.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  selected.sort((a, b) {
+    final trackCount = b.songs.length.compareTo(a.songs.length);
+    return trackCount != 0
+        ? trackCount
+        : a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  });
   return selected;
 }
 
